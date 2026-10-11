@@ -4,6 +4,51 @@ Newest first. Each entry records what changed, why, how it was verified, and any
 
 ---
 
+## 2026-10-11: R6, transport clock (approved), plus pause-reset and stale-bundle fixes
+
+**Branch:** `feat/transport-clock` (from `main` @ `ce77124`, after PR #26 merged). **Status:** implemented and verified. **Not committed** at time of writing.
+
+### Changes
+
+| Item | Files | What |
+|---|---|---|
+| Transport clock | `lib/transportClock.ts` (new), `lib/audioEngine.ts` | Per-deck segments: anchor (context time, position, rate) + exact integral of `setTargetAtTime` glides + native loop wrap + clamping. Updated wherever audio is scheduled: `startStutter`, `seekTo`, `stopStutter`, `startPerformanceLoop` / `stopPerformanceLoop`, `setDeckPlaybackRate` (native and SoundTouch), `disconnectDeck`. Public API: `getDeckPosition`, `getDeckRate`, `startDeckClock`, `stopDeckClock`, `setDeckClockPosition`. |
+| Hook on the clock | `hooks/useDeckAudio.ts` | One RAF loop for both paths reads `getDeckPosition`, replacing RAF delta integration and the SoundTouch input counter. Play/pause start/stop the clock. Pause publishes the exact stop position to the store. Paused scrub, new track and end-of-track set the clock explicitly. |
+| **Pause reset bug** (pre-existing) | `hooks/useDeckAudio.ts` | The "new track → reset to 0" effect depended on `syncRuntime`, which changes on every play/pause, so each pause jumped back to 0:00. That effect now calls `syncRuntime` through a ref. |
+| Exact positions for actions | `components/Deck.tsx`, `hooks/usePerformanceFX.ts` | Beat jump, loop in/out, quantized loop start, CUE/hot-cue set and the slip-roll/beat-break origin read the clock instead of React `currentTime`. |
+| Phase-true seek | `lib/audioEngine.ts` (`seekTo`) | The new source starts 3 ms ahead (anti-click), so it now starts 3 ms × rate further into the track, which keeps beat jumps in phase. |
+| **Stale dev bundles** (root cause) | `app/page.tsx` | The service worker served `/_next/static` cache-first, so every dev page load ran the *previous* build. It is now registered only in production, and dev unregisters any installed worker. |
+| Tests | `tests/transportClock.test.ts` | 6 tests: steps, glide vs numerical integration, mid-glide retarget continuity, loop wrap, clamping, stop/seek. |
+
+### Verification
+
+**Unit:** `npm test` 18/18.
+
+**Model vs real Web Audio** (`OfflineAudioContext`, clicks every 0.25 s of track time, engine call pattern, 4 rate changes including one mid-glide):
+- glide model: max **0.24 ms**, mean 0.09 ms
+- a naive step model would be off by up to 2.54 ms
+
+**Live app (Chrome pane, real track, fresh bundle verified each time):**
+
+| Check | Result |
+|---|---|
+| Clock linearity over 2 s | 0 ms residual (store value: 539 ms of jumps; the pane delivers only ~5 RAF/s) |
+| Pitch −8 % mid-play | 0 ms jump at the change; rate 0.920 (expected 0.92) |
+| Seek while playing | Lands at the target |
+| Slip roll ¼ beat at 90 BPM | Stays inside its 0.1667 s loop; releases at origin + elapsed |
+| Pause → resume ×3 | Store = clock to 1 ms; positions monotonic (before the fix: 2.80 s → 0.00) |
+| Key lock +6 % | Clock 1.060; SoundTouch's input counter leads by ~187 ms (its buffer) |
+| End of track | Stops and parks at 0 |
+| Beat jump +4 at 90 BPM | UI click **2.6667 s** (exact); 10 programmatic jumps **0 ms** phase error (−3 ms before the seek compensation) |
+
+**Static:** `tsc` clean; lint unchanged from baseline (4 errors, 2 warnings, all pre-existing); `npm run build` succeeds.
+
+### Notes for next steps
+- R7 (sample-accurate loops) and R8 (phase sync) can now read `getDeckPosition(deck, at)` at any *future* context time, which is what scheduling on the beat needs.
+- The embedded browser pane throttles RAF to ~5/s. Measure through the engine clock, never the store.
+
+---
+
 ## 2026-10-11: R5, main output routing fix (approved)
 
 **File:** `lib/audioEngine.ts` (34 lines added, 29 removed). **Status:** implemented and verified. **Not committed.**

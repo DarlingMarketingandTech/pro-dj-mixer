@@ -63,6 +63,13 @@ Graph-building methods (`createStemChain`, `createDeckFxBus`) are idempotent per
 
 **Playback rate in `useDeckAudio`.** It's read through `basePlaybackRateRef`. Never add `basePlaybackRate` back to the play/stop effect or to `syncRuntime`'s dependencies. Doing so restarts the source on every pitch move and resets it to 0:00 (fixed in R0).
 
+**Transport clock.** `lib/transportClock.ts` is pure and tested, and `AudioEngine.getDeckPosition(deck, at?)` reads it.
+- **The exact playhead.** Every engine method that schedules audio (start/stop/seek/stutter/loops/rate) must update `this.clocks[deck]` at the same moment.
+- **Position-critical actions read the clock.** That covers beat jump, loop points, cue set and the slip origin. `deckStore.currentTime` is a 30 Hz display value only.
+- **`syncRuntime` changes identity on every play/pause.** Effects that must run only for a new track call it via `syncRuntimeRef`; otherwise every pause resets the position to 0:00.
+
+**Dev server gotcha.** `public/sw.js` is registered only in production. A worker left installed in a dev browser serves the previous build. Unregister it if behaviour doesn't match the source.
+
 **Speaker routing.** Exactly one node may feed `context.destination`: the limiter (stereo) or the split-mono merger, never both (fixed in R5; it used to double the master, unlimited, on the left). Changes to the audio engine still need the owner's approval; see the roadmap for what is next.
 
 See `docs/` (research, comparison, roadmap, architecture, learning guide, implementation log) before planning audio work.

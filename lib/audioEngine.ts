@@ -1,3 +1,15 @@
+import {
+  createStoppedSegment,
+  positionAt,
+  rateAt,
+  retargetSegment,
+  seekSegment,
+  startSegment,
+  stopSegment,
+  type TransportLoop,
+  type TransportSegment,
+} from '@/lib/transportClock';
+
 export type StemType = 'drums' | 'inst' | 'vocals';
 export type NeuralStemGains = Record<StemType, { a: number; b: number }>;
 const NEURAL_STEM_GAIN = 1.0; // 1.0 since stems are now frequency-isolated 
@@ -90,6 +102,15 @@ export class AudioEngine {
     },
   };
   private originalPlayState: Record<'A' | 'B', boolean> = { A: false, B: false };
+  /**
+   * Computed playhead per deck (see lib/transportClock.ts). Updated at the same moment any audio
+   * change is scheduled (start, stop, seek, stutter, loop, rate glide), so position reads are exact
+   * at any context time instead of being polled from React state.
+   */
+  private clocks: Record<'A' | 'B', TransportSegment> = {
+    A: createStoppedSegment(),
+    B: createStoppedSegment(),
+  };
   private deckFxBuses: Partial<Record<'A' | 'B', {
     input: GainNode;
     crushBypassGain: GainNode;
@@ -335,6 +356,7 @@ export class AudioEngine {
     freshSource.playbackRate.value = deck.playbackRate;
     freshSource.connect(deck.stemInput);
     freshSource.start(now + 0.002, targetTime);
+    this.clocks[deckId] = startSegment(this.clockFor(deckId), targetTime, deck.playbackRate, now + 0.002);
 
     deck.deckGain.gain.setValueAtTime(0, now + 0.002);
     deck.deckGain.gain.linearRampToValueAtTime(1, now + 0.004);
@@ -357,6 +379,7 @@ export class AudioEngine {
 
     // If not playing, just update the position for the next play
     if (!deck.isPlaying) {
+      this.clocks[deckId] = seekSegment(this.clockFor(deckId), targetTime, now);
       deck.pauseTime = targetTime;
       deck.onPauseTime?.(targetTime);
       return;
@@ -379,7 +402,11 @@ export class AudioEngine {
     const freshSource = this.createPitchLockedSource(deckId, deck.buffer);
     freshSource.playbackRate.value = deck.playbackRate;
     freshSource.connect(deck.stemInput);
-    freshSource.start(now + 0.003, targetTime);
+    // The new source starts 3 ms from now (anti-click fade), so start it 3 ms further into the
+    // track: "seek to T" then means "be at T now", which keeps beat jumps exactly in phase.
+    const startPosition = Math.min(targetTime + 0.003 * deck.playbackRate, deck.buffer.duration);
+    freshSource.start(now + 0.003, startPosition);
+    this.clocks[deckId] = startSegment(this.clockFor(deckId), startPosition, deck.playbackRate, now + 0.003);
 
     deck.deckGain.gain.setValueAtTime(0, now + 0.003);
     deck.deckGain.gain.linearRampToValueAtTime(1, now + 0.006);
@@ -412,6 +439,7 @@ export class AudioEngine {
         deck.onSourceSwap?.(null);
       }
 
+      this.clocks[deckId] = stopSegment(this.clockFor(deckId), now, targetTime);
       deck.isPlaying = false;
       deck.pauseTime = targetTime;
       deck.onPauseTime?.(targetTime);
@@ -918,6 +946,7 @@ export class AudioEngine {
     const kle = this.deckKeyLockEngines[deckId];
     if (kle) {
       kle.soundTouch.tempo = targetRate;
+      this.clocks[deckId] = retargetSegment(this.clockFor(deckId), this.context.currentTime, targetRate, 0);
       return;
     }
 
@@ -934,6 +963,40 @@ export class AudioEngine {
     deck.source.playbackRate.cancelScheduledValues(now);
     deck.source.playbackRate.setValueAtTime(deck.source.playbackRate.value, now);
     deck.source.playbackRate.setTargetAtTime(targetRate, now, smoothing);
+    this.clocks[deckId] = retargetSegment(this.clockFor(deckId), now, targetRate, smoothing);
+  }
+
+  // ─── Transport clock ────────────────────────────────────────────────────────────
+
+  private clockFor(deckId: 'A' | 'B'): TransportSegment {
+    const duration = this.decks[deckId].buffer?.duration ?? Infinity;
+    return { ...this.clocks[deckId], duration };
+  }
+
+  /** Exact playhead (track seconds) of a deck at a context time (default: now). */
+  public getDeckPosition(deckId: 'A' | 'B', at: number = this.context.currentTime): number {
+    return positionAt(this.clockFor(deckId), at);
+  }
+
+  /** Instantaneous playback rate of a deck (0 while stopped). */
+  public getDeckRate(deckId: 'A' | 'B', at: number = this.context.currentTime): number {
+    return rateAt(this.clocks[deckId], at);
+  }
+
+  /** Record that playback of a deck started at `startAt` from `position` at `rate`. */
+  public startDeckClock(deckId: 'A' | 'B', position: number, rate: number, startAt: number = this.context.currentTime, loop: TransportLoop | null = null) {
+    this.clocks[deckId] = startSegment(this.clockFor(deckId), position, rate, startAt, loop);
+  }
+
+  /** Record that playback stopped now; returns the exact position it stopped at. */
+  public stopDeckClock(deckId: 'A' | 'B'): number {
+    this.clocks[deckId] = stopSegment(this.clockFor(deckId), this.context.currentTime);
+    return this.clocks[deckId].position;
+  }
+
+  /** Move a paused deck's clock (scrub, cue, new track). */
+  public setDeckClockPosition(deckId: 'A' | 'B', position: number) {
+    this.clocks[deckId] = seekSegment(this.clockFor(deckId), position, this.context.currentTime);
   }
 
   public createEQChain() {
@@ -1028,6 +1091,7 @@ export class AudioEngine {
 
     // Clean up the SoundTouch key-lock engine if active.
     this.cleanupKeyLockEngine(deckId);
+    this.clocks[deckId] = createStoppedSegment();
   }
 
   public getRecordingStream(): MediaStream | null {
@@ -1252,6 +1316,13 @@ export class AudioEngine {
     freshSource.playbackRate.value = deck.playbackRate * playbackRateMultiplier;
     freshSource.connect(deck.stemInput);
     freshSource.start(now + 0.002, safeLoopStart);
+    this.clocks[deckId] = startSegment(
+      this.clockFor(deckId),
+      safeLoopStart,
+      freshSource.playbackRate.value,
+      now + 0.002,
+      { start: freshSource.loopStart, end: freshSource.loopEnd },
+    );
 
     deck.deckGain.gain.setValueAtTime(0, now + 0.002);
     deck.deckGain.gain.linearRampToValueAtTime(1, now + 0.004);
@@ -1317,6 +1388,7 @@ export class AudioEngine {
       resumeSource.playbackRate.value = deck.playbackRate;
       resumeSource.connect(deck.stemInput);
       resumeSource.start(now + 0.002, resumeTime);
+      this.clocks[deckId] = startSegment(this.clockFor(deckId), resumeTime, deck.playbackRate, now + 0.002);
 
       deck.deckGain.gain.setValueAtTime(0, now + 0.002);
       deck.deckGain.gain.linearRampToValueAtTime(1, now + 0.004);
@@ -1327,6 +1399,7 @@ export class AudioEngine {
       deck.onSourceSwap?.(resumeSource);
       deck.onPauseTime?.(resumeTime);
     } else {
+      this.clocks[deckId] = stopSegment(this.clockFor(deckId), now, resumeTime);
       deck.isPlaying = false;
       deck.pauseTime = resumeTime;
       deck.currentTime = resumeTime;

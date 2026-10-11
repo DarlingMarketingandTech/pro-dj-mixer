@@ -547,7 +547,7 @@ export function Deck({ deckId, compact = false }: Readonly<DeckProps>) {
   }, [isPickerOpen]);
 
   const { padMode, setPadMode, handlePadHold, handlePadRelease, handleCueTimeHold, handleCueTimeRelease } = usePerformanceFX({
-    deckId, track, cuePoints, currentTime, bpm: currentBpm, setCue,
+    deckId, track, cuePoints, bpm: currentBpm, setCue,
   });
 
   const clearCueSlot = useCallback(async (slot: number) => {
@@ -582,14 +582,17 @@ export function Deck({ deckId, compact = false }: Readonly<DeckProps>) {
   };
 
   // Loop helpers
-  const handleSetLoopIn = () => setLoopIn(currentTime);
-  const handleSetLoopOut = () => { setLoopOut(currentTime); if (loopIn !== null) setLoopActive(true); };
+  // Position-critical actions read the engine's transport clock (exact), not the throttled React state.
+  const exactPosition = useCallback(() => AudioEngine.getInstance().getDeckPosition(deckId), [deckId]);
+  const handleSetLoopIn = () => setLoopIn(exactPosition());
+  const handleSetLoopOut = () => { setLoopOut(exactPosition()); if (loopIn !== null) setLoopActive(true); };
   const handleToggleLoop = () => setLoopActive(la => !la);
   const handleLoopSize = (bars: number) => {
     if (!track) return;
     const beats = bars * 4; // 4 beats per bar
     const loopLength = beats * beatPeriodSec(grid.bpm);
-    const startAt = quantize ? quantizedLoopStart(currentTime, grid, beats) : currentTime;
+    const now = exactPosition();
+    const startAt = quantize ? quantizedLoopStart(now, grid, beats) : now;
     setLoopIn(startAt);
     setLoopOut(startAt + loopLength);
     setLoopActive(true);
@@ -602,8 +605,8 @@ export function Deck({ deckId, compact = false }: Readonly<DeckProps>) {
     const beatDuration = 60 / bpm;
     const jumpSeconds = beats * beatDuration;
     const engine = AudioEngine.getInstance();
-    engine.seekTo(deckId, currentTime + jumpSeconds);
-  }, [deckId, track, currentBpm, currentTime]);
+    engine.seekTo(deckId, engine.getDeckPosition(deckId) + jumpSeconds);
+  }, [deckId, track, currentBpm]);
 
   const formatTime = (s: number) => {
     if (Number.isNaN(s) || s < 0) return '00:00';
@@ -738,7 +741,7 @@ export function Deck({ deckId, compact = false }: Readonly<DeckProps>) {
         {/* CUE */}
         <button
           type="button"
-          onClick={() => { if (!track) return; void setCue(track, 0, currentTime, 'hot', { color: deckTheme.primary, label: 'CUE' }); }}
+          onClick={() => { if (!track) return; void setCue(track, 0, exactPosition(), 'hot', { color: deckTheme.primary, label: 'CUE' }); }}
           disabled={!track}
           className="h-11 w-14 rounded-full border-2 text-[11px] font-black uppercase tracking-widest transition-all disabled:opacity-30"
           style={{ borderColor: deckTheme.primary, color: deckTheme.primary, background: `rgba(${deckTheme.primaryRgb},0.07)` }}
@@ -821,7 +824,7 @@ export function Deck({ deckId, compact = false }: Readonly<DeckProps>) {
                       handleCueTimeHold(cue.time, slot);
                     }
                   } else if (track) {
-                    void setCue(track, slot, currentTime, 'hot', { color: deckTheme.primary, label: `Cue ${slot}` });
+                    void setCue(track, slot, exactPosition(), 'hot', { color: deckTheme.primary, label: `Cue ${slot}` });
                   }
                 } else {
                   handlePadHold(slot);

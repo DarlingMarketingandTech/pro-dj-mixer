@@ -46,7 +46,6 @@ export function useDeckAudio(deckId: 'A' | 'B') {
 
   const pauseTimeRef = useRef<number>(0);
   const currentTimeRef = useRef<number>(0);
-  const lastContextTimeRef = useRef<number>(0);
   const lastStoreTimeCommitRef = useRef<number>(0);
   const lastUiTimePaintRef = useRef<number>(0);
   const animationRef = useRef<number | null>(null);
@@ -81,9 +80,8 @@ export function useDeckAudio(deckId: 'A' | 'B') {
         pauseTime: pauseTimeRef.current,
         currentTime: currentTimeRef.current,
       onSourceSwap: (next) => {
+        // The engine has already moved its transport clock; just track the live node.
         sourceRef.current = next;
-        lastContextTimeRef.current = engine.context.currentTime;
-        currentTimeRef.current = pauseTimeRef.current;
       },
       onPauseTime: (nextTime) => {
         pauseTimeRef.current = nextTime;
@@ -94,6 +92,12 @@ export function useDeckAudio(deckId: 'A' | 'B') {
       }
     });
   }, [commitDeckTime, deckId, deckState.buffer, deckState.isPlaying]);
+  // syncRuntime changes identity on every play/pause. Effects that must only run for a *new track*
+  // call it through this ref; depending on it directly reset the position to 0:00 on every pause.
+  const syncRuntimeRef = useRef(syncRuntime);
+  useEffect(() => {
+    syncRuntimeRef.current = syncRuntime;
+  }, [syncRuntime]);
 
   useEffect(() => {
     const engine = AudioEngine.getInstance();
@@ -190,12 +194,15 @@ export function useDeckAudio(deckId: 'A' | 'B') {
     const engine = AudioEngine.getInstance();
 
     const stopAudio = () => {
-      // Always persist the latest playback position before tearing down the source.
+      // Persist the exact position from the engine's transport clock before tearing down.
       if (sourceRef.current || keyLockNodeRef.current) {
-        pauseTimeRef.current = keyLockNodeRef.current
-          ? engine.getKeyLockPosition(deckId)
-          : currentTimeRef.current;
-        currentTimeRef.current = pauseTimeRef.current;
+        const stoppedAt = engine.stopDeckClock(deckId);
+        pauseTimeRef.current = stoppedAt;
+        currentTimeRef.current = stoppedAt;
+        lastUiTimePaintRef.current = stoppedAt;
+        // Publish the exact stop position (the throttled RAF commit may be a frame or more behind).
+        setCurrentTime(stoppedAt);
+        commitDeckTime(stoppedAt, true);
       }
 
       if (sourceRef.current) {
@@ -226,6 +233,37 @@ export function useDeckAudio(deckId: 'A' | 'B') {
       syncRuntime();
     };
 
+    // One RAF loop for both playback paths: the position is computed by the engine's transport
+    // clock, so seeks, stutters, loops and rate glides are reflected exactly.
+    const startPlayheadLoop = () => {
+      const updateTime = () => {
+        if (!deckState.isPlaying || !deckState.buffer || (!sourceRef.current && !keyLockNodeRef.current)) return;
+        const newTime = engine.getDeckPosition(deckId);
+        currentTimeRef.current = newTime;
+        // Keep transport text/playhead responsive while avoiding full deck rerenders every RAF.
+        if (Math.abs(newTime - lastUiTimePaintRef.current) >= 1 / 45) {
+          lastUiTimePaintRef.current = newTime;
+          setCurrentTime(newTime);
+        }
+        commitDeckTime(newTime);
+
+        if (newTime >= deckState.buffer.duration) {
+          // End of track: park the clock at 0 before the play/stop effect persists the position.
+          engine.stopDeckClock(deckId);
+          engine.setDeckClockPosition(deckId, 0);
+          togglePlay(deckId);
+          pauseTimeRef.current = 0;
+          currentTimeRef.current = 0;
+          lastUiTimePaintRef.current = 0;
+          setCurrentTime(0);
+          commitDeckTime(0, true);
+        } else {
+          animationRef.current = requestAnimationFrame(updateTime);
+        }
+      };
+      animationRef.current = requestAnimationFrame(updateTime);
+    };
+
     const playAudio = async () => {
       if (!deckState.buffer || !eqChainRef.current || !stemChainRef.current || !fxBusRef.current) return;
 
@@ -244,35 +282,11 @@ export function useDeckAudio(deckId: 'A' | 'B') {
         if (klNode) {
           keyLockNodeRef.current = klNode;
           klNode.connect(stemChainRef.current.input);
+          engine.startDeckClock(deckId, pauseTimeRef.current, basePlaybackRateRef.current);
           engine.setDeckPlaybackRate(deckId, basePlaybackRateRef.current);
           syncRuntime();
           currentTimeRef.current = pauseTimeRef.current;
-          lastContextTimeRef.current = engine.context.currentTime;
-
-          const updateTime = () => {
-            if (deckState.isPlaying && deckState.buffer && keyLockNodeRef.current) {
-              // Position comes directly from the SoundTouch filter's source counter.
-              const newTime = engine.getKeyLockPosition(deckId);
-              if (Math.abs(newTime - lastUiTimePaintRef.current) >= 1 / 45) {
-                lastUiTimePaintRef.current = newTime;
-                setCurrentTime(newTime);
-              }
-              commitDeckTime(newTime);
-
-              if (newTime >= deckState.buffer.duration) {
-                togglePlay(deckId);
-                pauseTimeRef.current = 0;
-                currentTimeRef.current = 0;
-                lastUiTimePaintRef.current = 0;
-                setCurrentTime(0);
-                commitDeckTime(0, true);
-              } else {
-                animationRef.current = requestAnimationFrame(updateTime);
-              }
-            }
-          };
-
-          animationRef.current = requestAnimationFrame(updateTime);
+          startPlayheadLoop();
           return;
         }
         // SoundTouch unavailable — fall through to native path below.
@@ -287,50 +301,19 @@ export function useDeckAudio(deckId: 'A' | 'B') {
       // Connect source to stem crossover input
       sourceRef.current.connect(stemChainRef.current.input);
 
-      sourceRef.current.start(0, pauseTimeRef.current);
+      const startAt = engine.context.currentTime;
+      sourceRef.current.start(startAt, pauseTimeRef.current);
+      engine.startDeckClock(deckId, pauseTimeRef.current, basePlaybackRateRef.current, startAt);
 
       syncRuntime();
 
       currentTimeRef.current = pauseTimeRef.current;
-      lastContextTimeRef.current = engine.context.currentTime;
-
-      const updateTime = () => {
-        if (deckState.isPlaying && deckState.buffer && sourceRef.current) {
-          const now = engine.context.currentTime;
-          const delta = now - lastContextTimeRef.current;
-          lastContextTimeRef.current = now;
-
-          const newTime = currentTimeRef.current + delta * sourceRef.current.playbackRate.value;
-          currentTimeRef.current = newTime;
-          // Keep transport text/playhead responsive while avoiding full deck rerenders every RAF.
-          if (Math.abs(newTime - lastUiTimePaintRef.current) >= 1 / 45) {
-            lastUiTimePaintRef.current = newTime;
-            setCurrentTime(newTime);
-          }
-          commitDeckTime(newTime);
-
-          if (newTime >= deckState.buffer.duration) {
-            togglePlay(deckId);
-            pauseTimeRef.current = 0;
-            currentTimeRef.current = 0;
-            lastUiTimePaintRef.current = 0;
-            setCurrentTime(0);
-            commitDeckTime(0, true);
-          } else {
-            animationRef.current = requestAnimationFrame(updateTime);
-          }
-        }
-      };
-
-      animationRef.current = requestAnimationFrame(updateTime);
+      startPlayheadLoop();
     };
 
     if (deckState.isPlaying) {
       playAudio();
     } else {
-      if (sourceRef.current) {
-        pauseTimeRef.current = currentTimeRef.current;
-      }
       stopAudio();
     }
 
@@ -360,11 +343,12 @@ export function useDeckAudio(deckId: 'A' | 'B') {
     pauseTimeRef.current = 0;
     currentTimeRef.current = 0;
     lastUiTimePaintRef.current = 0;
+    AudioEngine.getInstance().setDeckClockPosition(deckId, 0);
     const timer = setTimeout(() => setCurrentTime(0), 0);
-    syncRuntime();
+    syncRuntimeRef.current();
     commitDeckTime(0, true);
     return () => clearTimeout(timer);
-  }, [commitDeckTime, deckId, deckState.track, syncRuntime]);
+  }, [commitDeckTime, deckId, deckState.track]);
 
   const scrubTrack = useCallback((timeDelta: number) => {
     if (!deckState.buffer) return;
@@ -375,6 +359,7 @@ export function useDeckAudio(deckId: 'A' | 'B') {
       pauseTimeRef.current = newTime;
       currentTimeRef.current = newTime;
       lastUiTimePaintRef.current = newTime;
+      AudioEngine.getInstance().setDeckClockPosition(deckId, newTime);
       setCurrentTime(newTime);
       commitDeckTime(newTime, true);
       syncRuntime();

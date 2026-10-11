@@ -49,11 +49,14 @@ split-mono (opt-in): limiter → mono → L ┐ ChannelMerger → speakers, repl
 | Consumer | Source of position | Precision |
 |---|---|---|
 | Audio itself | `AudioBufferSourceNode` playhead (sample-accurate, inside the audio thread) | exact |
-| `useDeckAudio` local `currentTime` | Integrates `context.currentTime` deltas × the source's `playbackRate` in a RAF loop; repaints at about 45 Hz | ~1 frame |
+| **Engine transport clock** (`engine.getDeckPosition(deck, at?)`) | Computed from segments (`lib/transportClock.ts`): anchor + rate, exact `setTargetAtTime` glide integral, native loop wrap. Updated wherever audio is scheduled (play, stop, seek, stutter, slip-roll/beat-break, rate) | ≤ 0.24 ms vs rendered audio |
+| `useDeckAudio` local `currentTime` | Reads the transport clock in its RAF loop; repaints at about 45 Hz | exact value, sampled per frame |
 | `deckStore.currentTime` | Committed from the RAF loop at 30 Hz | ±33 ms |
 | Waveform canvas | Predicts at the playback rate and eases toward the store value; snaps on jumps > 0.25 s (`advancePlayhead`) | smooth, ±a few ms |
 
-Consequence: anything that must act *on the beat* (phase sync, quantized play, loop wrap) can't rely on `deckStore.currentTime`. That's why roadmap item R6 adds an engine-side transport clock.
+Rule: anything that must act *on the beat* (beat jump, loop points, cue setting, phase sync, quantized play) reads `AudioEngine.getDeckPosition()`, never `deckStore.currentTime` or React state. The store and React values are for display only.
+
+**Dev note.** `public/sw.js` serves `/_next/static` cache-first, so it is registered only in production (`app/page.tsx`). In development an installed worker made every page load run the *previous* build.
 
 ## Beat grid data flow (Phase 1)
 

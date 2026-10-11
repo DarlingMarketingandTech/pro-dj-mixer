@@ -58,6 +58,14 @@ export default function Home() {
 
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
+    // The worker serves /_next/static cache-first; dev chunk URLs never change, so in development
+    // every load would run the previous build. Only register it in production, and remove any
+    // worker a dev session already installed.
+    if (process.env.NODE_ENV !== 'production') {
+      void navigator.serviceWorker.getRegistrations().then((registrations) =>
+        registrations.forEach((registration) => void registration.unregister()));
+      return;
+    }
     void navigator.serviceWorker.register('/sw.js');
   }, []);
 

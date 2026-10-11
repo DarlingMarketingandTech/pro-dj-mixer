@@ -10,7 +10,6 @@ interface UsePerformanceFXOptions {
   deckId: 'A' | 'B';
   track: Track | null;
   cuePoints: CuePoint[];
-  currentTime: number;
   bpm: number;
   setCue: (track: Track, slot: number, time: number, type: 'hot' | 'memory', metadata?: { label?: string; color?: string }) => Promise<void>;
 }
@@ -26,10 +25,11 @@ export function usePerformanceFX({
   deckId,
   track,
   cuePoints,
-  currentTime,
   bpm,
   setCue,
 }: UsePerformanceFXOptions) {
+  // Exact playhead from the engine's transport clock (React's currentTime can be frames stale).
+  const exactPosition = useCallback(() => AudioEngine.getInstance().getDeckPosition(deckId), [deckId]);
   const [padMode, setPadMode] = useState<PerformancePadMode>('hot');
   const [activeRoll, setActiveRoll] = useState(false);
 
@@ -56,7 +56,7 @@ export function usePerformanceFX({
       return existing.time;
     }
 
-    const cueTime = currentTime;
+    const cueTime = exactPosition();
     const modeMeta = padMode === 'hot' ? null : MODE_METADATA[padMode];
     await setCue(track, slot, cueTime, 'hot', modeMeta ? { label: modeMeta.label, color: modeMeta.color } : undefined);
     broadcastCue(getCueTrackHash(track), {
@@ -68,7 +68,7 @@ export function usePerformanceFX({
       name: modeMeta?.label ?? `Cue ${slot}`,
     });
     return cueTime;
-  }, [cuePoints, currentTime, padMode, setCue, track]);
+  }, [cuePoints, exactPosition, padMode, setCue, track]);
 
   const handleCueTimeHold = useCallback((cueTime: number, slot?: number) => {
     const engine = AudioEngine.getInstance();
@@ -76,17 +76,17 @@ export function usePerformanceFX({
 
     if (padMode === 'slip-roll') {
       setActiveRoll(true);
-      engine.startSlipRoll(deckId, cueTime, currentTime, safeBpm, slot === undefined ? 0.25 : getSlipRollBeatFraction(slot));
+      engine.startSlipRoll(deckId, cueTime, exactPosition(), safeBpm, slot === undefined ? 0.25 : getSlipRollBeatFraction(slot));
       return;
     }
 
     if (padMode === 'beat-break') {
-      engine.startBeatBreak(deckId, cueTime, currentTime, safeBpm);
+      engine.startBeatBreak(deckId, cueTime, exactPosition(), safeBpm);
       return;
     }
 
     engine.startStutter(deckId, cueTime);
-  }, [bpm, currentTime, deckId, padMode]);
+  }, [bpm, deckId, exactPosition, padMode]);
 
   const handleCueTimeRelease = useCallback((_cueTime: number) => {
     const engine = AudioEngine.getInstance();
@@ -112,9 +112,9 @@ export function usePerformanceFX({
   }, [handleCueTimeHold, resolveCueTime]);
 
   const handlePadRelease = useCallback((slot: number) => {
-    const cueTime = cuePoints.find((cue) => cue.slot === slot)?.time ?? currentTime;
+    const cueTime = cuePoints.find((cue) => cue.slot === slot)?.time ?? exactPosition();
     handleCueTimeRelease(cueTime);
-  }, [cuePoints, currentTime, handleCueTimeRelease]);
+  }, [cuePoints, exactPosition, handleCueTimeRelease]);
 
   return {
     padMode,
