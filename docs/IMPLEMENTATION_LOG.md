@@ -4,7 +4,48 @@ Newest first. Each entry records what changed, why, how it was verified, and any
 
 ---
 
-## 2026-10-11: Tablet and phone layouts
+## 2026-10-11: Loading tracks on a phone
+
+**Branch:** `feat/phone-deck-and-track-loading` (from `feat/transport-clock`). **Status:** implemented and verified at 412×915 (close to your S26 Ultra) with touch emulation.
+
+**Why.** You tried the app on your phone and found picking tracks hard to understand. Testing it by tapping (no mouse) showed that on a phone **there was no reliable way to load a track**:
+
+| Problem | Cause |
+| --- | --- |
+| The deck's track picker said "No tracks found" | It only listed tracks the library had already read, and only the Library view read them |
+| The picker's LOAD label and BPM were invisible | They appeared only on mouse hover |
+| The Vault's **+** menu (Load to Deck A/B) was invisible | Hover only |
+| Vault rows and grid cards could only be dragged | Touch screens can't drag-and-drop here |
+| The Vault's sidebar took half the phone width | BPM, key and **+** were pushed off-screen, and the Vault used only 42% of the screen height |
+| "CUE" tab and "Add to Cue A" | It's an up-next queue, but DJs read "cue" as a marked spot inside a track |
+| The record didn't spin | It only spins while a track plays. Measured: 1,229.87° at 6.15 s, as expected (one turn every 1.8 s). Nothing could be loaded, so nothing played |
+
+**Changes**
+- **`components/Deck.tsx`**
+  - An empty deck says "Deck A is empty · Tap LOAD to choose a track" and has a labelled **LOAD** button.
+  - The picker:
+    - reads the library itself;
+    - always shows each track's BPM and LOAD;
+    - when the library is empty, explains that and offers **Open Vault**;
+    - doesn't pop up the keyboard on touch screens.
+  - The record is centred.
+- **`components/Library.tsx`**
+  - **+** is visible and larger on touch screens.
+  - "CUE" is renamed **QUEUE**, and its menu items are "Play next on Deck A/B".
+  - The queue explains itself, with LOAD NEXT and CLEAR buttons.
+  - Grid cards have LOAD A / LOAD B buttons.
+  - The toolbar wraps instead of scrolling the list sideways.
+- **`components/LibraryOverlay.tsx`**: on a phone the Vault opens without the sidebar, at 90% of the screen height.
+
+**Verified (browser pane, 412×915, touch emulation).** Each step was done by tapping:
+1. LOAD on an empty deck opens the picker, which lists 25 tracks.
+2. Tapping a track loads it, and the record spins when playing.
+3. With the library emptied in memory, the picker says "Your library is empty", and Browse the Vault opens the Vault.
+4. In the Vault, **+** → "Play next on Deck B", then QUEUE → LOAD NEXT, loads "Te Prometo" on Deck B.
+
+The Vault had no sideways scroll, and the console showed no errors. `npm test` 23/23, `tsc` clean, lint at baseline, build passes. **Not verified:** a real phone.
+
+
 
 **Branch:** `feat/transport-clock` working tree, on top of the uncommitted R6 changes. **Status:** implemented and verified. **Not committed.** You asked for tablet and mobile versions and gave the go-ahead to keep using REA.
 
