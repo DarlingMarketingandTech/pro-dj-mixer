@@ -17,7 +17,7 @@ const NAV_ITEMS: Array<{ id: MobileNavTab; label: string }> = [
 export function MobileNav({ activeTab, onTabChange, onOpenLibrary }: MobileNavProps) {
   return (
     <nav
-      className="md:hidden fixed bottom-0 left-0 right-0 z-50 deck-chassis border-t border-studio-gold/20"
+      className="fixed bottom-0 left-0 right-0 z-50 deck-chassis border-t border-studio-gold/20"
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       <div className="flex h-14">

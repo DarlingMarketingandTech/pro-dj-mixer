@@ -199,6 +199,23 @@ There are 36 hot cues (`NUM_HOT_CUES 37` includes the main cue; `cuecontrol.h:17
 
 MIDI/HID mappings are XML plus JavaScript files that read and write **ControlObjects** (string keys such as `[Channel1],play`). Every engine parameter is a ControlObject, so the UI, controllers and scripts all share one control surface. Not investigated in depth because DJ Pro Mixer's Web MIDI support is minimal (`hooks/useMIDIManager.ts`).
 
+## 8. Screen sizes and layouts
+
+**Mixxx has no phone or tablet interface.** It is a desktop application. It copes with smaller windows in four ways, none of them a mobile layout.
+
+| Mechanism | Evidence | What it does |
+| --- | --- | --- |
+| **Minimum skin size** | Installed `skins/LateNight/skin.xml`: `<MinimumSize>1280,668</MinimumSize>`. `Tango/skin.xml`: `1008,500`. `Shade/skin.xml`: `<Size>1008e,500e</Size>` | Each skin declares the smallest window it can work in. |
+| **Fit check** | `LegacySkin::fitsScreenSize` (`skin/legacy/legacyskin.cpp:86`); in the shipped binary at `0x140301f70` (PDB name, from the seed file) | Reads the skin's `MinimumSize` with a regex and returns false when it is wider or taller than the screen. It falls back to parsing a resolution from the skin name. Its only callers are in the Preferences dialog (`preferences/dialog/dlgprefinterface.cpp:161, 457`), which shows a warning label when the chosen skin doesn't fit. `SkinLoader::getDefaultSkinName` always returns `"LateNight"` (`skinloader.cpp:127`). So Mixxx warns about a skin that's too big but never switches skins by screen size. |
+| **Size-aware variants** | `SizeAwareLayout::setCurrentIndexForSize` (`widget/wsizeawarestack.cpp`); used by `Deere/mixer.xml:240` (crossfader buttons), `Tango/decks/row_loop_jump.xml:55`, `Tango/helpers/size_detector_*.xml`, `LateNight/fx/unit_parameters_hidden.xml:27` | A container holds variants **smallest first**. On resize it keeps the current one if it fits, otherwise it picks the first that fits exactly, then the largest whose minimum fits, then the smallest. This is Mixxx's closest thing to responsive design, used inside widgets. |
+| **User section toggles** | `[Skin],show_*` controls across the installed skins: `show_mixer` (40 uses), `show_maximized_library` (41), `show_waveforms` (13), `show_samplers` (30), `show_effectrack` (25), plus compact variants `show_rate_controls_compact` and `show_vumeters_compact` | The DJ hides whole sections to make room. The experimental QML interface (`qml/main.qml`) does the same with `visible:` bindings on `show4decks`, `maximizeLibrary`, `showSamplers` and `showEffects`. |
+
+**What DJ Pro Mixer takes from this (re-implemented, not copied).**
+- The `WSizeAwareStack` rule, applied to the whole page (`lib/layoutTier.ts`). There are three layouts: phone tabs, tablet one-screen, and desktop. The app picks the largest one that fits the viewport.
+- The `show_*` toggles map to the existing A / MX / B panel toggles. In the tablet layout, hidden panels give their space to the rest.
+
+**Not verified with REA decompilation.** In this session the REA server process reported `GHIDRA_INSTALL_DIR is not set`, because the new environment variables only reach a restarted MCP server. The binary address above comes from the PDB name dump (`C:\tools\rea-snapshots\mixxx-2.5.6-pdb.seeds`). The behaviour comes from source at tag 2.5.6 and from the installed skin XML.
+
 ---
 
 ## Verified vs. inferred

@@ -4,6 +4,73 @@ Newest first. Each entry records what changed, why, how it was verified, and any
 
 ---
 
+## 2026-10-11: Tablet and phone layouts
+
+**Branch:** `feat/transport-clock` working tree, on top of the uncommitted R6 changes. **Status:** implemented and verified. **Not committed.** You asked for tablet and mobile versions and gave the go-ahead to keep using REA.
+
+### Research
+
+Mixxx has no phone or tablet interface; see `research/MIXXX_REVERSE_ENGINEERING.md` §8. The useful idea is `WSizeAwareStack`: hold layout variants smallest first, and show the largest one that fits.
+
+### Measured before the change
+
+| Viewport | Problem |
+| --- | --- |
+| 1024×768 (iPad landscape) | Decks stacked in one column. Page **2,266 px** tall; the mixer header started at **1,758 px**, so the crossfader was off-screen |
+| 768×1024 (iPad portrait) | Same: page 2,257 px tall |
+| 812×375 (phone landscape) | Tab bar hidden by `md:hidden`, panel not scrollable: **Deck B and the mixer unreachable** |
+| 375×812 (phone portrait) | Top bar's fullscreen button 36 px past the right edge; Audio Stats badge over the Deck A tab |
+| 1366×1024 (iPad Pro landscape) | Fine: already the three-column desktop grid |
+
+### Changes
+
+- **`lib/layoutTier.ts`** (new, pure). `layoutFitFor(width, height)` returns `{ tier, mixerPlacement }`.
+  - phone: width < 768, or landscape with height ≤ 540.
+  - tablet: width < 1280. desktop: everything wider.
+  - mixerPlacement `between` when width ≥ 960, otherwise `below`.
+- **`hooks/useLayoutFit.ts`** (new). Recomputes on resize. The first render is desktop, so server and client markup match.
+- **`app/page.tsx`**
+  - Uses the tier instead of the old media query.
+  - New `TabletLayout`: compact waveforms, then panels with their own scroll and no page scroll. Hidden panels (A / MX / B) give up their space.
+  - Phone panels scroll (`overflow-y-auto`).
+  - The Audio Stats badge shows on desktop only, since it's fixed bottom-left.
+- **`components/Mixer.tsx`**
+  - `layout="strip"`: channel A | crossfader | channel B in one row, for portrait tablets.
+  - `ChannelStrip` has a `row` layout. The column layout is unchanged.
+- **`components/ViewControls.tsx`** takes a `variant` prop:
+  - phone: bar without the panel toggles or workspace switcher (the tabs replace them).
+  - tablet: bar with the A / MX / B toggles.
+  - desktop: unchanged.
+- **`components/MobileNav.tsx`**: removed `md:hidden`; the page renders it only for the phone tier.
+- **`tests/layoutTier.test.ts`**: 5 tests, covering devices and the exact breakpoints.
+
+### Verification (dev server, built-in browser)
+
+| Viewport | Layout | Result |
+| --- | --- | --- |
+| 1024×768 | tablet, between | Panels 336 / 298 / 336 px wide, scrollWidth = clientWidth (no sideways scroll), all 638 px tall with no inner scroll |
+| 1180×820 | tablet, between | Screenshot: three columns, crossfader and both Play buttons visible |
+| 768×1024 | tablet, below | Decks 364 px wide, 647 px tall with no inner scroll; mixer strip 742×233 with no scroll |
+| 820×1180 | tablet, below | Decks 390×803, strip 794×233; page scroll 0 |
+| 812×375 | phone | Tab bar visible; the active panel scrolls |
+| 375×812 | phone | 0 elements past the right edge; tab bar visible |
+| 1440×900 | desktop | Unchanged |
+
+- No console errors.
+- `npm test` 23/23, `tsc` clean.
+- Lint at the 4-error / 2-warning baseline.
+- `npm run build` passes.
+
+**Not verified:** a real touch device. All of this is viewport emulation in Chromium; Safari on iPad was not tested.
+
+### Left open
+
+- **Touch targets:** 33 of 83 phone buttons were under 32 px when measured before this change.
+- **Phone landscape:** only about 140 px of the deck is visible at once.
+- **Tablet portrait:** the Mixer's AI crate and MIDI controls live in the tab row above the strip. They are reachable, but the strip leaves no room for the crate list.
+
+---
+
 ## 2026-10-11: R6, transport clock (approved), plus pause-reset and stale-bundle fixes
 
 **Branch:** `feat/transport-clock` (from `main` @ `ce77124`, after PR #26 merged). **Status:** implemented and verified. **Not committed** at time of writing.

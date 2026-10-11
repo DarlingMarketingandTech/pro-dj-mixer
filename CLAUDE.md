@@ -97,7 +97,7 @@ See `docs/` (research, comparison, roadmap, architecture, learning guide, implem
 - `public/sw.js` — service worker registered from `app/page.tsx`.
 - `hooks/useMediaRecorder.ts` records the post-limiter master tap; `hooks/useMIDIManager.ts` wraps Web MIDI; `useKeyboardShortcuts` / `usePerformanceKeys` handle global and per-deck pad keys (both ignore events from form fields).
 - `components/scene/*` (react-three-fiber) are not currently imported anywhere.
-- `store/uiStore.ts` drives layout: `layoutMode`, panel visibility, performance mode, mobile `activeTab`. `app/page.tsx` switches to a tabbed compact layout under 768px width or short landscape.
+- `store/uiStore.ts` drives layout: `layoutMode`, panel visibility, performance mode, mobile `activeTab`. `app/page.tsx` picks one of three layouts with `useLayoutFit` (`lib/layoutTier.ts`, tested): **phone** (under 768 px wide, or landscape 540 px tall or less) shows one panel at a time with the bottom tabs; **tablet** (under 1280 px) puts both decks and the mixer on one screen with no page scroll; **desktop** is the three-column grid. On a tablet the mixer sits between the decks at 960 px wide or more; below that it becomes the low `Mixer layout="strip"` under the decks.
 
 ## Design conventions (from `.github/agents/dj-mixer-engineer.agent.md`)
 
