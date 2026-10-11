@@ -1,7 +1,8 @@
 'use client';
 
 import { memo, useEffect, useRef, useCallback } from 'react';
-import { useDeckStore } from '@/store/deckStore';
+import { useDeckStore, getDeckGrid, type DeckState } from '@/store/deckStore';
+import { beatIndexAt, beatPhase, beatTimeAt, type BeatGrid } from '@/lib/beatGrid';
 import { useMixerStore } from '@/store/mixerStore';
 import { useUIStore } from '@/store/uiStore';
 import { AudioEngine } from '@/lib/audioEngine';
@@ -10,9 +11,42 @@ type DeckSnapshot = {
   currentTime: number;
   duration: number;
   isPlaying: boolean;
-  bpm: number;
+  /** Beat grid (falls back to 120 BPM from 0:00 when the deck has no tempo). */
+  grid: BeatGrid;
   buffer: AudioBuffer | null;
+  /** Track seconds per wall-clock second (pitch fader), matching the engine's clamp. */
+  rate: number;
+  /** performance.now() when `currentTime` last changed, for extrapolating between store commits. */
+  receivedAt: number;
 };
+
+const FALLBACK_GRID: BeatGrid = { bpm: 120, firstBeatSec: 0 };
+/** Playhead errors beyond this (seeks, beat jumps, loops) snap instead of easing. */
+const PLAYHEAD_SNAP_SECONDS = 0.25;
+/** Fraction of the remaining playhead error corrected per frame. */
+const PLAYHEAD_CORRECTION = 0.15;
+
+const toSnapshot = (d: DeckState, previous?: DeckSnapshot): DeckSnapshot => ({
+  currentTime: d.currentTime,
+  duration: d.duration,
+  isPlaying: d.isPlaying,
+  grid: getDeckGrid(d) ?? FALLBACK_GRID,
+  buffer: d.buffer,
+  rate: Math.max(0.5, Math.min(2, 1 + d.pitchPercent / 100)),
+  receivedAt: previous && previous.currentTime === d.currentTime ? previous.receivedAt : performance.now(),
+});
+
+/**
+ * Smooth per-frame playhead: advance at the deck's playback rate, then steer toward the position
+ * extrapolated from the store's latest (30 Hz) commit, so pitch, seeks and loops stay in step.
+ */
+function advancePlayhead(playhead: number, snap: DeckSnapshot, dt: number, now: number): number {
+  if (!snap.isPlaying) return snap.currentTime;
+  const predicted = playhead + dt * snap.rate;
+  const target = snap.currentTime + ((now - snap.receivedAt) / 1000) * snap.rate;
+  const error = target - predicted;
+  return Math.abs(error) > PLAYHEAD_SNAP_SECONDS ? target : predicted + error * PLAYHEAD_CORRECTION;
+}
 
 interface FrequencyRGB {
   red: number;
@@ -272,24 +306,23 @@ function drawBeatGrid(
   width: number,
   height: number,
   yOffset: number,
-  bpm: number,
+  grid: BeatGrid,
   playhead: number,
   pixelsPerSecond: number,
 ): void {
-  const secondsPerBeat = 60 / (bpm || 120);
-  const pixelsPerBeat = secondsPerBeat * pixelsPerSecond;
+  const pixelsPerBeat = (60 / grid.bpm) * pixelsPerSecond;
   const centerX = width / 2;
   const beatsToDraw = Math.ceil(width / pixelsPerBeat) + 4;
-  const currentBeatIndex = Math.floor(playhead / secondsPerBeat);
+  const currentBeatIndex = Math.floor(beatIndexAt(playhead, grid));
 
   for (let i = -beatsToDraw; i <= beatsToDraw; i++) {
     const beatIndex = currentBeatIndex + i;
-    const beatTime = beatIndex * secondsPerBeat;
+    const beatTime = beatTimeAt(beatIndex, grid);
     const x = centerX + (beatTime - playhead) * pixelsPerSecond;
     if (x < 0 || x > width) continue;
 
-    const isDownbeat = beatIndex % 4 === 0;
-    const isPhraseStart = beatIndex % BEATS_PER_PHRASE_MARKER === 0;
+    const isDownbeat = ((beatIndex % 4) + 4) % 4 === 0;
+    const isPhraseStart = ((beatIndex % BEATS_PER_PHRASE_MARKER) + BEATS_PER_PHRASE_MARKER) % BEATS_PER_PHRASE_MARKER === 0;
     ctx.save();
     if (isPhraseStart) {
       ctx.strokeStyle = 'rgba(255,215,0,0.7)';
@@ -342,14 +375,12 @@ function drawPlayhead(ctx: CanvasRenderingContext2D, width: number, height: numb
 
 function getPhaseAlignment(
   playheadA: number,
-  bpmA: number,
+  gridA: BeatGrid,
   playheadB: number,
-  bpmB: number,
+  gridB: BeatGrid,
 ): { offset: number; isAligned: boolean } {
-  const safeBpmA = Number.isFinite(bpmA) && bpmA > 0 ? bpmA : 120;
-  const safeBpmB = Number.isFinite(bpmB) && bpmB > 0 ? bpmB : 120;
-  const beatFracA = ((playheadA / (60 / safeBpmA)) % 1 + 1) % 1;
-  const beatFracB = ((playheadB / (60 / safeBpmB)) % 1 + 1) % 1;
+  const beatFracA = beatPhase(playheadA, gridA);
+  const beatFracB = beatPhase(playheadB, gridB);
   const rawOffset = Math.abs(beatFracA - beatFracB);
   const offset = Math.min(rawOffset, 1 - rawOffset);
   return {
@@ -406,20 +437,8 @@ export const ParallelWaveforms = memo(function ParallelWaveforms({ compact = fal
   const setZoom = useUIStore((state) => state.setWaveformZoom);
   const isPerformanceMode = useUIStore((state) => state.isPerformanceMode);
 
-  const deckARef = useRef<DeckSnapshot>({
-    currentTime: useDeckStore.getState().deckA.currentTime,
-    duration: useDeckStore.getState().deckA.duration,
-    isPlaying: useDeckStore.getState().deckA.isPlaying,
-    bpm: Number(useDeckStore.getState().deckA.track?.bpm) || 120,
-    buffer: useDeckStore.getState().deckA.buffer,
-  });
-  const deckBRef = useRef<DeckSnapshot>({
-    currentTime: useDeckStore.getState().deckB.currentTime,
-    duration: useDeckStore.getState().deckB.duration,
-    isPlaying: useDeckStore.getState().deckB.isPlaying,
-    bpm: Number(useDeckStore.getState().deckB.track?.bpm) || 120,
-    buffer: useDeckStore.getState().deckB.buffer,
-  });
+  const deckARef = useRef<DeckSnapshot>(toSnapshot(useDeckStore.getState().deckA));
+  const deckBRef = useRef<DeckSnapshot>(toSnapshot(useDeckStore.getState().deckB));
 
   // Live frequency data — written each frame, never triggers React re-renders.
   const rgbARef = useRef<FrequencyRGB>({ red: DEFAULT_RGB, green: DEFAULT_RGB, blue: DEFAULT_RGB });
@@ -458,24 +477,10 @@ export const ParallelWaveforms = memo(function ParallelWaveforms({ compact = fal
   // Mirror Zustand deck state into refs so the RAF loop can read it without causing re-renders.
   useEffect(() => {
     const unsubA = useDeckStore.subscribe((state) => {
-      const d = state.deckA;
-      deckARef.current = {
-        currentTime: d.currentTime,
-        duration: d.duration,
-        isPlaying: d.isPlaying,
-        bpm: Number(d.track?.bpm) || 120,
-        buffer: d.buffer,
-      };
+      deckARef.current = toSnapshot(state.deckA, deckARef.current);
     });
     const unsubB = useDeckStore.subscribe((state) => {
-      const d = state.deckB;
-      deckBRef.current = {
-        currentTime: d.currentTime,
-        duration: d.duration,
-        isPlaying: d.isPlaying,
-        bpm: Number(d.track?.bpm) || 120,
-        buffer: d.buffer,
-      };
+      deckBRef.current = toSnapshot(state.deckB, deckBRef.current);
     });
 
     return () => {
@@ -517,11 +522,9 @@ export const ParallelWaveforms = memo(function ParallelWaveforms({ compact = fal
       const snapA = deckARef.current;
       const snapB = deckBRef.current;
 
-      if (snapA.isPlaying) playheadA += dt;
-      else playheadA = snapA.currentTime;
-
-      if (snapB.isPlaying) playheadB += dt;
-      else playheadB = snapB.currentTime;
+      const now = performance.now();
+      playheadA = advancePlayhead(playheadA, snapA, dt, now);
+      playheadB = advancePlayhead(playheadB, snapB, dt, now);
 
       // Update live frequency data into refs (no React state, no re-renders).
       rgbARef.current = getFrequencyDataFromAnalyser(engine.getDeckAnalyser('A'));
@@ -531,7 +534,7 @@ export const ParallelWaveforms = memo(function ParallelWaveforms({ compact = fal
       const height = canvas.height;
       const halfHeight = height / 2;
       const pixelsPerSecond = zoom;
-      const phaseAlignment = getPhaseAlignment(playheadA, snapA.bpm, playheadB, snapB.bpm);
+      const phaseAlignment = getPhaseAlignment(playheadA, snapA.grid, playheadB, snapB.grid);
 
       const ctx = canvas.getContext('2d');
       if (!ctx) {
@@ -643,8 +646,8 @@ export const ParallelWaveforms = memo(function ParallelWaveforms({ compact = fal
       // 4. Beat grid and centre divider — normal compositing, above the waveform.
       ctx.save();
       ctx.globalCompositeOperation = 'source-over';
-      drawBeatGrid(ctx, width, halfHeight, 0, snapA.bpm, playheadA, pixelsPerSecond);
-      drawBeatGrid(ctx, width, halfHeight, halfHeight, snapB.bpm, playheadB, pixelsPerSecond);
+      drawBeatGrid(ctx, width, halfHeight, 0, snapA.grid, playheadA, pixelsPerSecond);
+      drawBeatGrid(ctx, width, halfHeight, halfHeight, snapB.grid, playheadB, pixelsPerSecond);
       ctx.fillStyle = 'rgba(255,255,255,0.1)';
       ctx.fillRect(0, halfHeight - 1, width, 2);
       ctx.restore();

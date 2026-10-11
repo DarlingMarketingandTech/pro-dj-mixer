@@ -31,6 +31,14 @@ export interface CuePoint {
   updatedAt: number;
 }
 
+/** Constant-tempo beat grid from lib/beatGrid.ts. Stored unindexed, so no schema version bump. */
+export interface TrackBeatGrid {
+  bpm: number;
+  firstBeatSec: number;
+  confidence: number;
+  version: number;
+}
+
 export interface Track {
   id?: number;
   sourceId?: string;
@@ -45,6 +53,7 @@ export interface Track {
   audioUrl?: string;
   artworkUrl?: string;
   overviewWaveform?: number[];
+  beatGrid?: TrackBeatGrid;
   createdAt: number;
 }
 

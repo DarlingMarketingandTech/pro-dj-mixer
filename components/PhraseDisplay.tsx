@@ -1,6 +1,7 @@
 'use client';
 
 import { useDeckStore } from '@/store/deckStore';
+import { beatIndexAt } from '@/lib/beatGrid';
 
 /** Standard phrase length in beats (8 bars × 4 beats). Most electronic/pop music uses 8-bar phrases. */
 const BEATS_PER_PHRASE = 32;
@@ -24,12 +25,15 @@ export function PhraseDisplay({ bpm, deckId, label }: Readonly<PhraseDisplayProp
   const currentTime = useDeckStore(
     (s) => (deckId === 'A' ? s.deckA.currentTime : s.deckB.currentTime),
   );
+  // Phrases count from the analysed first beat (0:00 until the track has a grid).
+  const firstBeatSec = useDeckStore(
+    (s) => (deckId === 'A' ? s.deckA.beatGrid : s.deckB.beatGrid)?.firstBeatSec ?? 0,
+  );
 
   if (!bpm || bpm <= 0) return null;
 
-  const secondsPerBeat = 60 / bpm;
-  const currentBeat = currentTime / secondsPerBeat;
-  const beatInPhrase = currentBeat % BEATS_PER_PHRASE;
+  const currentBeat = beatIndexAt(currentTime, { bpm, firstBeatSec });
+  const beatInPhrase = ((currentBeat % BEATS_PER_PHRASE) + BEATS_PER_PHRASE) % BEATS_PER_PHRASE;
   const beatsRemaining = BEATS_PER_PHRASE - beatInPhrase;
   const barsRemaining = Math.ceil(beatsRemaining / 4);
 

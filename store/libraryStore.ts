@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { db, Track } from '@/lib/db';
+import { db, Track, type TrackBeatGrid } from '@/lib/db';
+import { BEAT_GRID_VERSION, formatBpm } from '@/lib/beatGrid';
 import { broadcastLibraryRefresh } from '@/lib/syncManager';
 import toast from 'react-hot-toast';
 import type { AnalysisRequest, AnalysisResponse } from '@/lib/analysisWorker';
@@ -88,9 +89,11 @@ type CachedAnalysis = {
   bpm: string;
   duration: string;
   overviewWaveform: number[];
+  beatGrid?: TrackBeatGrid;
 };
 
-const ANALYSIS_CACHE_PREFIX = 'piko-track-analysis-v1:';
+// Keyed by grid version so cached results from an older detector are ignored and recomputed.
+const ANALYSIS_CACHE_PREFIX = `piko-track-analysis-grid${BEAT_GRID_VERSION}:`;
 const pendingTrackKeys = new Set<string>();
 
 // Reusable decode context (main thread only). Workers cannot use Web Audio APIs.
@@ -254,6 +257,19 @@ const buildTrackFromAnalysis = (
   energy: 'Medium',
   hasVocal: false,
   overviewWaveform: analysis.overviewWaveform,
+  ...(analysis.beatGrid ? { beatGrid: analysis.beatGrid } : {}),
+});
+
+const toBeatGrid = (res: AnalysisResponse): TrackBeatGrid | undefined =>
+  res.firstBeatSec === null
+    ? undefined
+    : { bpm: res.bpm, firstBeatSec: res.firstBeatSec, confidence: res.confidence, version: BEAT_GRID_VERSION };
+
+const toCachedAnalysis = (res: AnalysisResponse): CachedAnalysis => ({
+  bpm: formatBpm(res.bpm),
+  duration: formatDuration(res.duration),
+  overviewWaveform: Array.from(res.overviewPeaks),
+  beatGrid: toBeatGrid(res),
 });
 
 // Helper to wrap the worker postMessage in a Promise
@@ -323,6 +339,34 @@ const decodeToMonoChannelData = async (arrayBuffer: ArrayBuffer) => {
   };
 };
 
+/**
+ * Beat-grid analysis for a buffer that is already decoded (e.g. a track just loaded on a deck).
+ * Copies channel 0 first: transferring the live channel data would detach it from the playing buffer.
+ */
+export const analyzeBeatGridForBuffer = async (buffer: AudioBuffer): Promise<TrackBeatGrid | null> => {
+  const channelData = new Float32Array(buffer.getChannelData(0));
+  const res = await analyzeAudio({
+    id: crypto.randomUUID(),
+    channelData,
+    sampleRate: buffer.sampleRate,
+    duration: buffer.duration,
+  });
+  return toBeatGrid(res) ?? null;
+};
+
+/** Persist a newly computed grid (and its BPM) for a library track and refresh library state. */
+export const persistTrackBeatGrid = async (track: Track, beatGrid: TrackBeatGrid) => {
+  const bpm = formatBpm(beatGrid.bpm);
+  if (track.id !== undefined) {
+    await db.tracks.update(track.id, { bpm, beatGrid });
+  }
+  const identity = { id: track.id, sourceId: track.sourceId, audioUrl: track.audioUrl };
+  useLibraryStore.setState((state) => ({
+    tracks: state.tracks.map((t) => (trackIdentityMatches(t, identity) ? { ...t, bpm, beatGrid } : t)),
+  }));
+  broadcastLibraryRefresh();
+};
+
 export const useLibraryStore = create<LibraryState>((set, get) => ({
   tracks: [],
   processingTracks: [],
@@ -383,11 +427,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
             const arrayBuffer = await file.arrayBuffer();
             const decoded = await decodeToMonoChannelData(arrayBuffer);
             const res = await analyzeAudio({ id: crypto.randomUUID(), ...decoded });
-            resolvedAnalysis = {
-              bpm: res.bpm.toString(),
-              duration: formatDuration(res.duration),
-              overviewWaveform: Array.from(res.overviewPeaks),
-            };
+            resolvedAnalysis = toCachedAnalysis(res);
             writeCachedAnalysis(sourceId, resolvedAnalysis);
           }
 
@@ -463,11 +503,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
             const arrayBuffer = await fetchArrayBufferStrict(track.url);
             const decoded = await decodeToMonoChannelData(arrayBuffer);
             const res = await analyzeAudio({ id: track.id, ...decoded });
-            const built = {
-              bpm: res.bpm.toString(),
-              duration: formatDuration(res.duration),
-              overviewWaveform: Array.from(res.overviewPeaks),
-            };
+            const built = toCachedAnalysis(res);
             writeCachedAnalysis(sourceId, built);
             return built;
           })());
@@ -486,6 +522,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           hasVocal: false,
           audioUrl: track.url,
           artworkUrl: pickRandomArtworkUrl(),
+          ...(analysis.beatGrid ? { beatGrid: analysis.beatGrid } : {}),
           createdAt: Date.now(),
         };
 
@@ -582,11 +619,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
           const arrayBuffer = await fetchArrayBufferStrict(track.url);
           const decoded = await decodeToMonoChannelData(arrayBuffer);
           const res = await analyzeAudio({ id: track.id, ...decoded });
-          analysis = {
-            bpm: res.bpm.toString(),
-            duration: formatDuration(res.duration),
-            overviewWaveform: Array.from(res.overviewPeaks),
-          };
+          analysis = toCachedAnalysis(res);
           writeCachedAnalysis(sourceId, analysis);
         } else {
           set({ queueProgress: `Syncing ${i + 1} of ${tracksToLoad.length}: ${track.title}` });
