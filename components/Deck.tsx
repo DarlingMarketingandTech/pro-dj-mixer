@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useDeckStore, getDeckBpm } from '@/store/deckStore';
 import { useLibraryStore } from '@/store/libraryStore';
+import { useUIStore } from '@/store/uiStore';
 import { useTrackCueStore } from '@/store/trackCueStore';
 import { useDeckAudio } from '@/hooks/useDeckAudio';
 import { usePerformanceFX } from '@/hooks/usePerformanceFX';
@@ -70,12 +71,29 @@ const PLATTER_REV_S = 1.8;
 
 // ─── Quick Track Picker ───────────────────────────────────────────────────────
 function TrackPicker({ deckId, deckTheme, onClose }: { deckId: 'A' | 'B'; deckTheme: DeckTheme; onClose: () => void }) {
-  const { tracks } = useLibraryStore(useShallow(s => ({ tracks: s.tracks })));
+  const { tracks, loadTracks } = useLibraryStore(useShallow(s => ({ tracks: s.tracks, loadTracks: s.loadTracks })));
   const loadTrack = useDeckStore(s => s.loadTrack);
+  const setIsLibraryOverlayOpen = useUIStore(s => s.setIsLibraryOverlayOpen);
   const [q, setQ] = useState('');
+  // The library list is otherwise only read when the Library view mounts, so read it here too
+  // (IndexedDB only, no downloads) or the picker shows an empty list on a fresh page.
+  const [isReadingLibrary, setIsReadingLibrary] = useState(tracks.length === 0);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { inputRef.current?.focus(); }, []);
+  useEffect(() => {
+    // On touch screens focusing would pop the keyboard up over the list.
+    if (window.matchMedia('(pointer: fine)').matches) inputRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    if (!isReadingLibrary) return;
+    void loadTracks().finally(() => setIsReadingLibrary(false));
+  }, [isReadingLibrary, loadTracks]);
+
+  const openVault = useCallback(() => {
+    onClose();
+    setIsLibraryOverlayOpen(true);
+  }, [onClose, setIsLibraryOverlayOpen]);
 
   const filtered = useMemo(() => {
     if (!q.trim()) return tracks.slice(0, 20);
@@ -105,24 +123,50 @@ function TrackPicker({ deckId, deckTheme, onClose }: { deckId: 'A' | 'B'; deckTh
       style={{ boxShadow: `0 20px 60px rgba(0,0,0,0.8), 0 0 0 1px rgba(${deckTheme.primaryRgb},0.2)` }}
     >
       {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-white/8">
+      <div className="flex items-center justify-between gap-2 px-3 pt-2.5">
+        <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: deckTheme.primary }}>
+          Choose a track for Deck {deckId}
+        </span>
+        <button type="button" onClick={onClose} className="text-white/40 hover:text-white text-[10px] font-bold px-2 py-1 -mr-1 rounded">
+          CLOSE
+        </button>
+      </div>
+      <div className="flex items-center gap-2 mx-3 my-2 px-2.5 py-2 rounded-xl border border-white/10 bg-white/5">
         <Search className="w-3.5 h-3.5 text-white/30 flex-shrink-0" />
         <input
           ref={inputRef}
-          type="text"
+          type="search"
           value={q}
           onChange={e => setQ(e.target.value)}
-          placeholder={`Load to Deck ${deckId}…`}
-          className="flex-1 bg-transparent text-sm text-white placeholder:text-white/20 focus:outline-none"
+          placeholder="Search title or artist"
+          className="flex-1 min-w-0 bg-transparent text-sm text-white placeholder:text-white/30 focus:outline-none"
         />
-        <button type="button" onClick={onClose} className="text-white/20 hover:text-white text-xs px-1.5">ESC</button>
       </div>
 
       {/* Track list */}
-      <div className="max-h-56 overflow-y-auto">
-        {filtered.length === 0 ? (
-          <div className="flex items-center gap-2 px-4 py-6 text-white/20 text-xs">
-            <Music2 className="w-4 h-4" /> No tracks found
+      <div className="max-h-64 overflow-y-auto border-t border-white/8">
+        {isReadingLibrary && tracks.length === 0 ? (
+          <div className="px-4 py-6 text-white/40 text-xs">Loading your library…</div>
+        ) : tracks.length === 0 ? (
+          <div className="flex flex-col items-start gap-3 px-4 py-5">
+            <div className="flex items-center gap-2 text-white/70 text-xs font-semibold">
+              <Music2 className="w-4 h-4" /> Your library is empty
+            </div>
+            <p className="text-[11px] leading-relaxed text-white/45">
+              Open the Vault to get the free tracks or add music from your device. They will show up here.
+            </p>
+            <button
+              type="button"
+              onClick={openVault}
+              className="rounded-full px-4 py-2 text-[11px] font-black uppercase tracking-widest text-black"
+              style={{ background: `linear-gradient(135deg,${deckTheme.primary},${deckTheme.secondary})` }}
+            >
+              Open Vault
+            </button>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="flex items-center gap-2 px-4 py-6 text-white/40 text-xs">
+            <Music2 className="w-4 h-4" /> No tracks match &ldquo;{q.trim()}&rdquo;
           </div>
         ) : (
           filtered.map(track => (
@@ -130,7 +174,7 @@ function TrackPicker({ deckId, deckTheme, onClose }: { deckId: 'A' | 'B'; deckTh
               key={track.id}
               type="button"
               onClick={() => load(track)}
-              className="flex items-center gap-2.5 w-full px-3 py-2 text-left hover:bg-white/8 transition-colors border-b border-white/4 last:border-0 group"
+              className="flex items-center gap-2.5 w-full min-h-12 px-3 py-2 text-left hover:bg-white/8 active:bg-white/10 transition-colors border-b border-white/4 last:border-0"
             >
               <div
                 className="w-7 h-7 rounded flex-shrink-0 border border-white/10"
@@ -140,11 +184,12 @@ function TrackPicker({ deckId, deckTheme, onClose }: { deckId: 'A' | 'B'; deckTh
                 <div className="text-[11px] font-semibold text-white/90 truncate">{track.title}</div>
                 <div className="text-[9px] text-white/35 truncate">{track.artist}</div>
               </div>
-              <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                <span className="text-[9px] font-mono text-white/40">{track.bpm}</span>
+              {/* Always visible: a touch screen has no hover. */}
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span className="text-[10px] font-mono text-white/40">{track.bpm || '--'} BPM</span>
                 <span
-                  className="text-[9px] font-black px-1 py-px rounded"
-                  style={{ color: deckTheme.primary }}
+                  className="text-[9px] font-black px-2 py-1 rounded-full border"
+                  style={{ color: deckTheme.primary, borderColor: `rgba(${deckTheme.primaryRgb},0.4)` }}
                 >
                   LOAD
                 </span>
@@ -154,10 +199,11 @@ function TrackPicker({ deckId, deckTheme, onClose }: { deckId: 'A' | 'B'; deckTh
         )}
       </div>
 
-      {/* Drop hint */}
-      <div className="px-3 py-1.5 border-t border-white/5 flex items-center gap-2">
-        <FolderOpen className="w-3 h-3 text-white/20" />
-        <span className="text-[9px] text-white/20">Or drag a track onto this deck</span>
+      <div className="px-3 py-2 border-t border-white/5 flex items-center justify-between gap-2">
+        <span className="text-[9px] text-white/30 pointer-coarse:hidden">Or drag a track from the library onto this deck</span>
+        <button type="button" onClick={openVault} className="ml-auto text-[10px] font-bold text-white/50 hover:text-white">
+          Browse the Vault →
+        </button>
       </div>
     </motion.div>
   );
@@ -646,12 +692,17 @@ export function Deck({ deckId, compact = false }: Readonly<DeckProps>) {
             onClick={() => setIsPickerOpen(!isPickerOpen)}
             title="Click to load a track"
           />
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-bold truncate leading-tight" style={{ color: track ? deckTheme.primary : 'rgba(255,255,255,0.2)' }}>
-              {track?.title ?? 'No Track Loaded'}
-            </p>
-            <p className="text-[10px] text-white/35 truncate">{track?.artist ?? 'Click artwork or drag a track'}</p>
-          </div>
+          {track ? (
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-bold truncate leading-tight" style={{ color: deckTheme.primary }}>{track.title}</p>
+              <p className="text-[10px] text-white/35 truncate">{track.artist}</p>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setIsPickerOpen(!isPickerOpen)} className="min-w-0 flex-1 text-left">
+              <p className="text-xs font-bold truncate leading-tight text-white/70">Deck {deckId} is empty</p>
+              <p className="text-[10px] text-white/40 truncate">Tap LOAD to choose a track</p>
+            </button>
+          )}
           {/* BPM + Key */}
           <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
             <span
@@ -663,18 +714,24 @@ export function Deck({ deckId, compact = false }: Readonly<DeckProps>) {
             <span className="text-[9px] uppercase tracking-widest text-white/25">{track?.key ?? '--'}</span>
           </div>
           {/* Quick Load Button */}
+          {/* Labelled LOAD while the deck is empty; just the folder icon once a track is loaded. */}
           <button
             type="button"
             onClick={() => setIsPickerOpen(!isPickerOpen)}
             className={clsx(
-              'flex-shrink-0 h-7 w-7 rounded-full flex items-center justify-center border transition-all',
+              'flex-shrink-0 h-8 rounded-full flex items-center justify-center gap-1.5 border transition-all',
+              track ? 'w-8' : 'px-3 text-[10px] font-black tracking-widest',
               isPickerOpen
                 ? 'border-yellow-500/50 bg-yellow-500/15 text-yellow-400'
-                : 'border-white/10 bg-white/5 text-white/30 hover:text-white hover:border-white/20'
+                : track
+                  ? 'border-white/10 bg-white/5 text-white/40 hover:text-white hover:border-white/20'
+                  : 'text-black border-transparent'
             )}
-            title="Browse & load track"
+            style={!track && !isPickerOpen ? { background: `linear-gradient(135deg,${deckTheme.primary},${deckTheme.secondary})` } : undefined}
+            title="Choose a track for this deck"
           >
             <FolderOpen className="w-3.5 h-3.5" />
+            {!track && 'LOAD'}
           </button>
         </div>
 
@@ -705,7 +762,7 @@ export function Deck({ deckId, compact = false }: Readonly<DeckProps>) {
       </div>
 
       {/* ── Jog Wheel + Pitch + Volume ───────────────────────────────────── */}
-      <div className={clsx('flex items-center gap-2 px-3', isLeft ? 'flex-row' : 'flex-row-reverse')}>
+      <div className={clsx('flex items-center justify-center gap-4 px-3', isLeft ? 'flex-row' : 'flex-row-reverse')}>
         <JogWheel
           deckId={deckId} isPlaying={isPlaying} track={track} currentTime={currentTime}
           deckTheme={deckTheme} onScrub={scrubTrack} onScrubEnd={endScrub}

@@ -213,7 +213,9 @@ const TrackRow = memo(function TrackRow({
           <button
             type="button"
             onClick={() => setMenuOpen(!menuOpen)}
-            className="w-6 h-6 rounded flex items-center justify-center text-white/20 hover:text-white hover:bg-white/10 transition-all opacity-0 group-hover:opacity-100"
+            className="w-6 h-6 pointer-coarse:w-9 pointer-coarse:h-9 rounded flex items-center justify-center text-white/20 pointer-coarse:text-white/60 hover:text-white hover:bg-white/10 transition-all opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100"
+            title="Load or queue this track"
+            aria-label={`Load or queue ${track.title}`}
           >
             <Plus className="w-3.5 h-3.5" />
           </button>
@@ -230,8 +232,8 @@ const TrackRow = memo(function TrackRow({
                 {[
                   { label: 'Load to Deck A', color: deckAColor, action: () => { onLoadDeckA(track); setMenuOpen(false); } },
                   { label: 'Load to Deck B', color: deckBColor, action: () => { onLoadDeckB(track); setMenuOpen(false); } },
-                  { label: 'Add to Cue A', color: deckAColor + '99', action: () => { onAddCueA(track); setMenuOpen(false); } },
-                  { label: 'Add to Cue B', color: deckBColor + '99', action: () => { onAddCueB(track); setMenuOpen(false); } },
+                  { label: 'Play next on Deck A', color: deckAColor + '99', action: () => { onAddCueA(track); setMenuOpen(false); } },
+                  { label: 'Play next on Deck B', color: deckBColor + '99', action: () => { onAddCueB(track); setMenuOpen(false); } },
                 ].map((item) => (
                   <button
                     key={item.label}
@@ -502,7 +504,8 @@ export const Library = memo(function Library({ compact = false }: Readonly<{ com
       </AnimatePresence>
 
       {/* ── Top Toolbar ──────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-white/5 bg-black/40 flex-shrink-0">
+      {/* Wraps on narrow screens: one row was wider than a phone and scrolled the whole list sideways. */}
+      <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-white/5 bg-black/40 flex-shrink-0">
         {/* Sidebar toggle */}
         {!compact && (
           <button
@@ -519,7 +522,7 @@ export const Library = memo(function Library({ compact = false }: Readonly<{ com
         <div className="flex items-center gap-1 flex-shrink-0">
           {([
             { id: 'tracks', label: 'ALL TRACKS', icon: <Music2 className="w-3 h-3" /> },
-            { id: 'cue', label: 'CUE', icon: <LayoutGrid className="w-3 h-3" /> },
+            { id: 'cue', label: 'QUEUE', icon: <LayoutGrid className="w-3 h-3" /> },
             { id: 'history', label: 'HISTORY', icon: <Clock className="w-3 h-3" /> },
           ] as const).map((tab) => (
             <button
@@ -742,36 +745,42 @@ export const Library = memo(function Library({ compact = false }: Readonly<{ com
 
           {/* Cue Queue Tab */}
           {activeTab === 'cue' && (
-            <div className="p-3 grid grid-cols-2 gap-4">
+            <div className="p-3 grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <p className="sm:col-span-2 text-[11px] leading-relaxed text-white/45">
+                Line up the tracks you want to play next on each deck. On any track, tap <span className="font-bold text-white/70">+</span> and
+                choose <span className="font-bold text-white/70">Play next on Deck A</span> or <span className="font-bold text-white/70">B</span>.
+                When the deck is ready, <span className="font-bold text-white/70">LOAD NEXT</span> puts the first track in the line on it.
+              </p>
               {(['A', 'B'] as const).map((d) => {
                 const queue = d === 'A' ? queueA : queueB;
                 const color = d === 'A' ? '#D4AF37' : '#E11D48';
                 return (
                   <div key={d}>
                     <div className="flex items-center justify-between mb-2">
-                      <h3 className="text-[10px] uppercase tracking-widest font-black" style={{ color }}>{`DECK ${d} QUEUE`}</h3>
+                      <h3 className="text-[10px] uppercase tracking-widest font-black" style={{ color }}>{`DECK ${d} · UP NEXT`}</h3>
                       <div className="flex gap-1">
                         <button
                           type="button"
                           onClick={() => { const next = popNext(d); if (next) useDeckStore.getState().loadTrack(d, next); }}
                           disabled={queue.length === 0}
-                          className="px-2 py-0.5 text-[9px] font-bold rounded border border-white/10 text-white/40 hover:text-white transition-colors disabled:opacity-30"
+                          className="px-2 py-1 text-[9px] font-bold rounded border border-white/10 text-white/50 hover:text-white transition-colors disabled:opacity-30"
+                          title={`Load the first queued track onto Deck ${d}`}
                         >
-                          NEXT
+                          LOAD NEXT
                         </button>
                         <button
                           type="button"
                           onClick={() => clearCue(d)}
                           disabled={queue.length === 0}
-                          className="px-2 py-0.5 text-[9px] font-bold rounded border border-white/10 text-white/40 hover:text-red-400 transition-colors disabled:opacity-30"
+                          className="px-2 py-1 text-[9px] font-bold rounded border border-white/10 text-white/50 hover:text-red-400 transition-colors disabled:opacity-30"
                         >
-                          CLR
+                          CLEAR
                         </button>
                       </div>
                     </div>
                     <div className="space-y-0.5">
                       {queue.length === 0 ? (
-                        <div className="py-6 text-center text-white/20 text-[11px]">Queue empty</div>
+                        <div className="py-5 text-center text-white/30 text-[11px]">Nothing lined up for Deck {d} yet</div>
                       ) : (
                         queue.map((t, i) => (
                           <div key={`q${d}-${t.id ?? i}`} className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white/3 hover:bg-white/7 group">
@@ -783,7 +792,8 @@ export const Library = memo(function Library({ compact = false }: Readonly<{ com
                             <button
                               type="button"
                               onClick={() => { if (t.id) removeFromCue(d, t.id); }}
-                              className="opacity-0 group-hover:opacity-100 text-white/20 hover:text-red-400 transition-all"
+                              className="opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 pointer-coarse:p-2 text-white/20 hover:text-red-400 transition-all"
+                              aria-label={`Remove ${t.title} from the Deck ${d} queue`}
                             >
                               <X className="w-3 h-3" />
                             </button>
@@ -835,6 +845,19 @@ export const Library = memo(function Library({ compact = false }: Readonly<{ com
                           <div className="text-[10px] font-semibold text-white/90 truncate">{track.title}</div>
                           <div className="text-[9px] text-white/35 truncate">{track.artist}</div>
                           <div className="text-[9px] font-mono text-white/40 mt-0.5">{track.bpm || '--'} BPM</div>
+                          <div className="mt-1.5 grid grid-cols-2 gap-1">
+                            {(['A', 'B'] as const).map((d) => (
+                              <button
+                                key={d}
+                                type="button"
+                                onClick={() => { useDeckStore.getState().loadTrack(d, track); toast.success(`Loaded to Deck ${d}`); }}
+                                className="py-1 rounded-md border text-[9px] font-black transition-colors hover:bg-white/10"
+                                style={{ color: d === 'A' ? '#D4AF37' : '#E11D48', borderColor: d === 'A' ? 'rgba(212,175,55,0.35)' : 'rgba(225,29,72,0.35)' }}
+                              >
+                                LOAD {d}
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       </div>
                     );
@@ -893,8 +916,8 @@ export const Library = memo(function Library({ compact = false }: Readonly<{ com
                           onDragStart={handleTrackDragStart}
                           onLoadDeckA={(t) => { useDeckStore.getState().loadTrack('A', t); toast.success('Loaded to Deck A'); }}
                           onLoadDeckB={(t) => { useDeckStore.getState().loadTrack('B', t); toast.success('Loaded to Deck B'); }}
-                          onAddCueA={(t) => { addToCue('A', t); toast.success('Added to Cue A'); }}
-                          onAddCueB={(t) => { addToCue('B', t); toast.success('Added to Cue B'); }}
+                          onAddCueA={(t) => { addToCue('A', t); toast.success('Queued to play next on Deck A'); }}
+                          onAddCueB={(t) => { addToCue('B', t); toast.success('Queued to play next on Deck B'); }}
                         />
                       );
                     })}

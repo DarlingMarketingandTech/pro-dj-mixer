@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react';
 import { X, BookOpen } from 'lucide-react';
 import { Library } from '@/components/Library';
+import { useLayoutFit } from '@/hooks/useLayoutFit';
 
 interface LibraryOverlayProps {
   isOpen: boolean;
@@ -11,6 +12,8 @@ interface LibraryOverlayProps {
 
 export function LibraryOverlay({ isOpen, onClose }: LibraryOverlayProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
+  // On a phone the crates sidebar took half the width and pushed BPM, key and the + menu off-screen.
+  const isPhone = useLayoutFit().tier === 'phone';
 
   // Close on Escape key
   useEffect(() => {
@@ -48,6 +51,7 @@ export function LibraryOverlay({ isOpen, onClose }: LibraryOverlayProps) {
         style={{
           background: 'linear-gradient(135deg, rgba(15,15,20,0.97) 0%, rgba(20,20,30,0.97) 100%)',
           maxHeight: '90vh',
+          ...(isPhone ? { height: '90vh' } : {}),
           boxShadow: '0 0 60px rgba(212,175,55,0.08), 0 25px 50px rgba(0,0,0,0.8)',
         }}
       >
@@ -79,7 +83,7 @@ export function LibraryOverlay({ isOpen, onClose }: LibraryOverlayProps) {
 
         {/* Library content */}
         <div className="flex-1 min-h-0 overflow-hidden" style={{ touchAction: 'pan-y' }}>
-          <Library />
+          <Library compact={isPhone} />
         </div>
       </div>
     </div>
