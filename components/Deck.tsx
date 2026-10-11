@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useDeckStore } from '@/store/deckStore';
+import { useDeckStore, getDeckBpm } from '@/store/deckStore';
 import { useLibraryStore } from '@/store/libraryStore';
 import { useTrackCueStore } from '@/store/trackCueStore';
 import { useDeckAudio } from '@/hooks/useDeckAudio';
@@ -10,6 +10,7 @@ import { usePerformanceKeys } from '@/hooks/usePerformanceKeys';
 import { PerformancePads } from '@/components/deck/PerformancePads';
 import { FXRack } from '@/components/deck/FXRack';
 import { AudioEngine } from '@/lib/audioEngine';
+import { beatPeriodSec, effectiveBpm, isLowConfidenceGrid, quantizedLoopStart, type BeatGrid } from '@/lib/beatGrid';
 import type { Track } from '@/lib/db';
 import { broadcastCue } from '@/lib/syncManager';
 import { getCueTrackHash } from '@/store/trackCueStore';
@@ -483,7 +484,14 @@ export function Deck({ deckId, compact = false }: Readonly<DeckProps>) {
   const { setCue, clearCue, loadCues, getCues } = useTrackCueStore();
 
   // Local state
-  const currentBpm = useMemo(() => Number(track?.bpm) || 120, [track?.bpm]);
+  const deckBpm = useDeckStore(s => getDeckBpm(deckId === 'A' ? s.deckA : s.deckB));
+  const beatGrid = useDeckStore(s => (deckId === 'A' ? s.deckA : s.deckB).beatGrid);
+  const currentBpm = deckBpm || 120;
+  // Analysed grid when available; tracks not analysed yet fall back to a grid anchored at 0:00.
+  const grid = useMemo<BeatGrid>(
+    () => beatGrid ? { bpm: beatGrid.bpm, firstBeatSec: beatGrid.firstBeatSec } : { bpm: currentBpm, firstBeatSec: 0 },
+    [beatGrid, currentBpm],
+  );
   const [isDragOver, setIsDragOver] = useState(false);
   const [isPerformanceOpen, setIsPerformanceOpen] = useState(false);
   const [isPickerOpen, setIsPickerOpen] = useState(false);
@@ -579,10 +587,9 @@ export function Deck({ deckId, compact = false }: Readonly<DeckProps>) {
   const handleToggleLoop = () => setLoopActive(la => !la);
   const handleLoopSize = (bars: number) => {
     if (!track) return;
-    const bpm = currentBpm || 120;
-    const barDuration = (60 / bpm) * 4; // 4 beats per bar
-    const loopLength = barDuration * bars;
-    const startAt = quantize ? Math.round(currentTime / barDuration) * barDuration : currentTime;
+    const beats = bars * 4; // 4 beats per bar
+    const loopLength = beats * beatPeriodSec(grid.bpm);
+    const startAt = quantize ? quantizedLoopStart(currentTime, grid, beats) : currentTime;
     setLoopIn(startAt);
     setLoopOut(startAt + loopLength);
     setLoopActive(true);
@@ -644,8 +651,11 @@ export function Deck({ deckId, compact = false }: Readonly<DeckProps>) {
           </div>
           {/* BPM + Key */}
           <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
-            <span className="text-sm font-mono font-black text-white leading-none">
-              {track ? (sync ? `${currentBpm.toFixed(1)}⟳` : currentBpm.toFixed(1)) : '--'}
+            <span
+              className="text-sm font-mono font-black text-white leading-none"
+              title={beatGrid && isLowConfidenceGrid(beatGrid) ? 'Approximate: this track may not hold one steady tempo, so the beat grid can drift' : undefined}
+            >
+              {track ? `${beatGrid && isLowConfidenceGrid(beatGrid) ? '~' : ''}${effectiveBpm(currentBpm, pitchPercent).toFixed(1)}${sync ? '⟳' : ''}` : '--'}
             </span>
             <span className="text-[9px] uppercase tracking-widest text-white/25">{track?.key ?? '--'}</span>
           </div>

@@ -10,7 +10,7 @@ import { RemixGrid } from '@/components/RemixGrid';
 import { Layout as PerformanceLayout } from '@/components/Layout';
 import { clsx } from 'clsx';
 import { useUIStore } from '@/store/uiStore';
-import { useDeckStore } from '@/store/deckStore';
+import { useDeckStore, getDeckBpm } from '@/store/deckStore';
 import { useShallow } from 'zustand/react/shallow';
 import { AddMusicModal } from '@/components/AddMusicModal';
 import { Library } from '@/components/Library';
@@ -41,8 +41,8 @@ export default function Home() {
 
   // Omit currentTime from these selectors — PhraseDisplay subscribes to it directly,
   // isolating the 30 Hz re-renders to that small component instead of the whole page.
-  const deckA = useDeckStore(useShallow((s) => ({ isPlaying: s.deckA.isPlaying, bpm: Number(s.deckA.track?.bpm) || 0 })));
-  const deckB = useDeckStore(useShallow((s) => ({ isPlaying: s.deckB.isPlaying, bpm: Number(s.deckB.track?.bpm) || 0 })));
+  const deckA = useDeckStore(useShallow((s) => ({ isPlaying: s.deckA.isPlaying, bpm: getDeckBpm(s.deckA) })));
+  const deckB = useDeckStore(useShallow((s) => ({ isPlaying: s.deckB.isPlaying, bpm: getDeckBpm(s.deckB) })));
 
   const [isCompactViewport, setIsCompactViewport] = useState(false);
   const [isRemixDrawerOpen, setIsRemixDrawerOpen] = useState(false);

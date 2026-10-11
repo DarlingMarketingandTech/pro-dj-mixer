@@ -9,9 +9,11 @@ npm run dev          # Next.js dev server (http://localhost:3000)
 npm run build        # Production build (output: 'standalone')
 npm run lint         # eslint . (flat config in eslint.config.mjs, extends eslint-config-next)
 npx tsc --noEmit     # Type check
+npm test             # node --test "tests/**/*.test.ts" (Node 22 built-in runner, native TS type stripping)
+node --test --test-name-pattern="sync" "tests/**/*.test.ts"   # run matching tests only
 ```
 
-There is no test framework or test suite. Verify changes with `tsc` + `lint` and by running the app in a browser (audio requires a user gesture to resume the `AudioContext`).
+Tests use no test framework or dependencies. A module under test must import cleanly in plain Node: no `@/` alias, no browser globals. That's why `lib/beatGrid.ts` has no imports. Tests import with the `.ts` extension (`tsconfig.json` sets `allowImportingTsExtensions`). Anything touching Web Audio must be verified by running the app in a browser (audio needs a user gesture to resume the `AudioContext`). Lint has 6 pre-existing problems in `Layout.tsx`, `Library.tsx` and `useMediaRecorder.ts`.
 
 `next.config.ts` sets `eslint.ignoreDuringBuilds: true` but `typescript.ignoreBuildErrors: false`, so type errors break `npm run build` while lint errors do not. When `DISABLE_HMR=true` (AI Studio), webpack file watching is disabled entirely.
 
@@ -51,10 +53,29 @@ Graph-building methods (`createStemChain`, `createDeckFxBus`) are idempotent per
 - Key lock uses native `preservesPitch` when available, otherwise a SoundTouch (`soundtouchjs`, dynamically imported) `ScriptProcessorNode` path; position then comes from `engine.getKeyLockPosition`.
 - **`store/mixerStore.ts`**: crossfader (-1..1), curve (`blend` | `cut` | `neural`), volumes, EQ, vault ambience. The `neural` curve hard-swaps stems at thresholds via `calculateNeuralGains`.
 
+### Beat grid and sync
+
+- **Analysis.** `lib/beatGrid.ts` holds the analysis (onset envelope → autocorrelation → phase-histogram refinement) plus all grid maths (`quantizedLoopStart`, `beatPhase`, `computeSyncPitchPercent`, `effectiveBpm`).
+- **Storage.** Grids live on `Track.beatGrid` and, per deck, on `DeckState.beatGrid`. Read them through `getDeckBpm` / `getDeckGrid` in `store/deckStore.ts`.
+- **Don't store the grid by replacing `deck.track`.** `useDeckAudio` resets the playhead whenever the `track` object changes.
+- **Versioning.** Raising `BEAT_GRID_VERSION` makes decks re-analyse stale grids on load.
+- **Sync.** The deck you press SYNC on follows the other deck's effective BPM. Moving its own pitch releases sync.
+
+**Playback rate in `useDeckAudio`.** It's read through `basePlaybackRateRef`. Never add `basePlaybackRate` back to the play/stop effect or to `syncRuntime`'s dependencies. Doing so restarts the source on every pitch move and resets it to 0:00 (fixed in R0).
+
+**Known P0 defect that needs the owner's approval before touching the audio path:** the split-mono monitor routing duplicates the master to the left channel (`audioEngine.ts`, roadmap R5).
+
+See `docs/` (research, comparison, roadmap, architecture, learning guide, implementation log) before planning audio work.
+
 ### Persistence & library
 
 - **IndexedDB via Dexie** (`lib/db.ts`, database `DJDatabase`): `tracks`, `cuePoints`, `crates`, `crateTracks`, `history`. Schema changes require a new `this.version(n)` block that repeats all tables.
-- **`store/libraryStore.ts`** ingests local files and "vault" tracks (hard-coded `PIKO_VAULT_TRACKS` plus a `library.json` manifest fetched from the public R2 bucket). BPM/overview-waveform analysis runs in `lib/analysisWorker.ts` (bundled via `new URL(..., import.meta.url)`); decoding happens on the main thread because workers can't use Web Audio. Results are cached in localStorage (`piko-track-analysis-v1:*`). `components/Library.tsx` separately uses the static `public/workers/analyzer.worker.js`.
+- **`store/libraryStore.ts`** ingests local files and "vault" tracks: hard-coded `PIKO_VAULT_TRACKS` plus a `library.json` manifest fetched from the public R2 bucket.
+  - Beat-grid and overview-waveform analysis runs in `lib/analysisWorker.ts` (bundled via `new URL(..., import.meta.url)`).
+  - Decoding happens on the main thread, because workers can't use Web Audio.
+  - Results are cached in localStorage under `piko-track-analysis-grid<BEAT_GRID_VERSION>:*`.
+  - `analyzeBeatGridForBuffer` / `persistTrackBeatGrid` serve lazy per-deck analysis.
+  - `components/Library.tsx` separately uses the static `public/workers/analyzer.worker.js`. It's a legacy fallback that always returns 120 BPM.
 - **Cues**: `store/trackCueStore.ts` is the main cue store, keyed by `getCueTrackHash(track)` (sourceId → audioUrl → metadata fallback). `store/cueStore.ts` is an older store still used by `Library.tsx`.
 - **Cloud vault** (`app/api/vault/`): `route.ts` returns a presigned R2 PUT URL, `sync/route.ts` appends to the `library.json` manifest, `delete/route.ts` removes objects. The browser uploads directly to R2.
 
