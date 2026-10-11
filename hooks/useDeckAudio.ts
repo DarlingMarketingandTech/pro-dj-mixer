@@ -53,6 +53,12 @@ export function useDeckAudio(deckId: 'A' | 'B') {
 
   const [currentTime, setCurrentTime] = useState(0);
   const basePlaybackRate = Math.max(0.5, Math.min(2.0, 1 + deckState.pitchPercent / 100));
+  // Callbacks and effects that start, stop or reset playback read the rate through this ref, so a
+  // pitch move never re-runs them (that used to restart the track from 0:00 at rate 1.0).
+  const basePlaybackRateRef = useRef(basePlaybackRate);
+  useEffect(() => {
+    basePlaybackRateRef.current = basePlaybackRate;
+  }, [basePlaybackRate]);
 
   const commitDeckTime = useCallback((time: number, force = false) => {
     const commitInterval = 1 / 30; // 30 Hz commit rate to avoid global-store thrash.
@@ -71,7 +77,7 @@ export function useDeckAudio(deckId: 'A' | 'B') {
         stemInput: stemChainRef.current?.input ?? null,
         deckGain: deckGainRef.current,
         isPlaying: deckState.isPlaying,
-        playbackRate: basePlaybackRate,
+        playbackRate: basePlaybackRateRef.current,
         pauseTime: pauseTimeRef.current,
         currentTime: currentTimeRef.current,
       onSourceSwap: (next) => {
@@ -87,7 +93,7 @@ export function useDeckAudio(deckId: 'A' | 'B') {
         commitDeckTime(nextTime, true);
       }
     });
-  }, [basePlaybackRate, commitDeckTime, deckId, deckState.buffer, deckState.isPlaying]);
+  }, [commitDeckTime, deckId, deckState.buffer, deckState.isPlaying]);
 
   useEffect(() => {
     const engine = AudioEngine.getInstance();
@@ -233,12 +239,12 @@ export function useDeckAudio(deckId: 'A' | 'B') {
           deckId,
           deckState.buffer,
           pauseTimeRef.current,
-          basePlaybackRate,
+          basePlaybackRateRef.current,
         );
         if (klNode) {
           keyLockNodeRef.current = klNode;
           klNode.connect(stemChainRef.current.input);
-          engine.setDeckPlaybackRate(deckId, basePlaybackRate);
+          engine.setDeckPlaybackRate(deckId, basePlaybackRateRef.current);
           syncRuntime();
           currentTimeRef.current = pauseTimeRef.current;
           lastContextTimeRef.current = engine.context.currentTime;
@@ -274,10 +280,12 @@ export function useDeckAudio(deckId: 'A' | 'B') {
 
       // ── Native path (AudioBufferSourceNode + optional preservesPitch) ──
       sourceRef.current = engine.createPitchLockedSource(deckId, deckState.buffer);
+      // Set the rate on the new node itself: the engine's registered source is still the old
+      // (stopped) one here, so engine.setDeckPlaybackRate would miss this node.
+      sourceRef.current.playbackRate.value = basePlaybackRateRef.current;
 
       // Connect source to stem crossover input
       sourceRef.current.connect(stemChainRef.current.input);
-      engine.setDeckPlaybackRate(deckId, basePlaybackRate);
 
       sourceRef.current.start(0, pauseTimeRef.current);
 
@@ -329,7 +337,7 @@ export function useDeckAudio(deckId: 'A' | 'B') {
     return () => {
       stopAudio();
     };
-  }, [basePlaybackRate, commitDeckTime, deckId, deckState.buffer, deckState.isPlaying, deckState.keyLock, syncRuntime, togglePlay]);
+  }, [commitDeckTime, deckId, deckState.buffer, deckState.isPlaying, deckState.keyLock, syncRuntime, togglePlay]);
 
   useEffect(() => {
     // Update tempo for both native (AudioBufferSourceNode) and SoundTouch paths.
