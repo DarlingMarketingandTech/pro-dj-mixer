@@ -23,11 +23,13 @@ export class AudioEngine {
   public masterGain: GainNode;
   public masterAnalyser: AnalyserNode;
   public cueGain: GainNode;
-  private cueMonitorGain: GainNode;
-  private masterMonitorGain: GainNode;
-  private masterPanner: StereoPannerNode;
-  private cuePanner: StereoPannerNode;
-  private isSplitMono = true;
+  // Split-mono cueing on one stereo output (like a DJ splitter cable): limited main mix in mono on
+  // the left, cue bus in mono on the right. Only one of {limiter, splitMonoMerger} ever feeds the
+  // speakers, so the main mix is never doubled or routed around the limiter.
+  private splitMonoMain: GainNode;
+  private splitMonoCue: GainNode;
+  private splitMonoMerger: ChannelMergerNode;
+  private isSplitMono = false;
   private remixBus: GainNode;
   private limiter: DynamicsCompressorNode;
   private bunkerConvolver: ConvolverNode;
@@ -183,12 +185,9 @@ export class AudioEngine {
     this.masterGain.gain.value = 0.5;
     this.cueGain = this.context.createGain();
     this.cueGain.gain.value = 1;
-    this.cueMonitorGain = this.context.createGain();
-    this.cueMonitorGain.gain.value = 1;
-    this.masterMonitorGain = this.context.createGain();
-    this.masterMonitorGain.gain.value = 1;
-    this.masterPanner = this.context.createStereoPanner();
-    this.cuePanner = this.context.createStereoPanner();
+    this.splitMonoMain = this.createMonoDownmix();
+    this.splitMonoCue = this.createMonoDownmix();
+    this.splitMonoMerger = this.context.createChannelMerger(2);
     this.remixBus = this.context.createGain();
     this.remixBus.gain.value = 0.72;
 
@@ -223,13 +222,13 @@ export class AudioEngine {
     // Remix bus is intentionally post-master-FX but pre-limiter so captured loops bypass deck/master FX
     // coloration while still landing inside the final safety stage.
     this.remixBus.connect(this.limiter);
+    // Normal stereo output: the limiter is the only path to the speakers.
     this.limiter.connect(this.context.destination);
-    this.masterGain.connect(this.masterMonitorGain);
-    this.masterMonitorGain.connect(this.masterPanner);
-    this.masterPanner.connect(this.context.destination);
-    this.cueGain.connect(this.cueMonitorGain);
-    this.cueMonitorGain.connect(this.cuePanner);
-    this.cuePanner.connect(this.context.destination);
+    // Split-mono bus, pre-wired but only reaches the speakers while enabled (setSplitMonoEnabled).
+    this.limiter.connect(this.splitMonoMain);
+    this.splitMonoMain.connect(this.splitMonoMerger, 0, 0);
+    this.cueGain.connect(this.splitMonoCue);
+    this.splitMonoCue.connect(this.splitMonoMerger, 0, 1);
 
     // Recording tap: connect the final post-limiter signal to the MediaStreamDestination
     this.recordingDestination = this.context.createMediaStreamDestination();
@@ -237,7 +236,15 @@ export class AudioEngine {
 
     this.workletReadyPromise = this.ensureAudioWorklets();
     void this.loadBunkerImpulse();
-    this.setSplitMonoEnabled(true);
+  }
+
+  /** Gain node that downmixes any input to mono (0.5 × (L + R) for stereo). */
+  private createMonoDownmix() {
+    const node = this.context.createGain();
+    node.channelCount = 1;
+    node.channelCountMode = 'explicit';
+    node.channelInterpretation = 'speakers';
+    return node;
   }
 
   public static getInstance(): AudioEngine {
@@ -865,22 +872,20 @@ export class AudioEngine {
     deckFxGains[stemType].gain.setTargetAtTime(clamped, now, 0.02);
   }
 
+  /**
+   * Switch between normal stereo output and split-mono cueing (main left, cue right).
+   * Swaps which single node feeds the speakers; never both.
+   */
   public setSplitMonoEnabled(enabled: boolean) {
+    if (enabled === this.isSplitMono) return;
     this.isSplitMono = enabled;
-    const now = this.context.currentTime;
     if (enabled) {
-      this.masterPanner.pan.setValueAtTime(-1, now);
-      this.cuePanner.pan.setValueAtTime(1, now);
-      // Hard-panning mono buses costs ~3 dB of perceived loudness per side, so apply √2 gain
-      // compensation to keep headphone monitoring loudness aligned with the stereo mix.
-      this.masterMonitorGain.gain.setValueAtTime(1.41, now);
-      this.cueMonitorGain.gain.setValueAtTime(1.41, now);
+      this.limiter.disconnect(this.context.destination);
+      this.splitMonoMerger.connect(this.context.destination);
       return;
     }
-    this.masterPanner.pan.setValueAtTime(0, now);
-    this.cuePanner.pan.setValueAtTime(0, now);
-    this.masterMonitorGain.gain.setValueAtTime(1, now);
-    this.cueMonitorGain.gain.setValueAtTime(1, now);
+    this.splitMonoMerger.disconnect(this.context.destination);
+    this.limiter.connect(this.context.destination);
   }
 
   public getSplitMonoEnabled() {

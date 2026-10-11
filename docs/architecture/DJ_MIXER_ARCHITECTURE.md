@@ -40,7 +40,8 @@ AudioBufferSourceNode  (or SoundTouch ScriptProcessor when key lock needs it)
 masterGain → master analyser → dry + "bunker" convolution reverb (20 % wet) → limiter → speakers
                                                                           → recording tap
 remixBus → limiter
-masterGain / cueGain → split-mono monitor panners → speakers   ⚠ see FEATURE_COMPARISON (routing bug)
+split-mono (opt-in): limiter → mono → L ┐ ChannelMerger → speakers, replacing the stereo limiter → speakers path
+                     cueGain → mono → R ┘ (only one path ever feeds the speakers)
 ```
 
 ## Timing model (where "now" comes from)

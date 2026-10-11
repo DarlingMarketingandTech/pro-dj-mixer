@@ -104,7 +104,7 @@ Built from `docs/research/FEATURE_COMPARISON.md`. Each item lists purpose (A), u
 | # | Request | Why | Risk |
 |---|---|---|---|
 | 0 | ~~Edit `hooks/useDeckAudio.ts` for **R0**~~ ✅ approved and done 2026-10-11 | P0: pitch, nudge and SYNC were inaudible | Done; see implementation log |
-| 1 | Edit `lib/audioEngine.ts` for **R5** routing fix | P0 audible imbalance and unlimited path | Low; small diff, easy rollback |
+| 1 | ~~Edit `lib/audioEngine.ts` for **R5** routing fix~~ ✅ approved and done 2026-10-11 | P0 audible imbalance and unlimited path | Done; see implementation log |
 | 2 | Edit engine + `useDeckAudio` for **R6/R7/R8** | Phase sync and sample-accurate loops need a precise clock | Medium; core play path |
 | 3 | **R9** headphone output via `setSinkId` | Real PFL cueing | Chromium-only; needs a device picker |
 | 4 | ~~Install **Ghidra 12.1.x + JDK 21**~~ ✅ approved and done 2026-10-11 (`C:\tools`) | Enable REA function-level tracing of `mixxx.exe` | Done |

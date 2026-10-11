@@ -38,7 +38,7 @@ source (AudioBufferSourceNode, or SoundTouch ScriptProcessor for key lock)
 masterGain → master analyser → dry + "bunker" convolver reverb → limiter → destination
                                                                        → MediaStreamDestination (recording tap)
 remixBus → limiter (bypasses master FX)
-masterGain / cueGain → split-mono panners → destination (headphone cueing)
+split-mono (opt-in, setSplitMonoEnabled): limiter → mono L + cueGain → mono R via ChannelMerger REPLACES limiter → destination
 ```
 
 Note `deckGain` (crossfader × channel volume) lives inside the FX bus object (`fxBus.deckGain`). "Stems" are frequency-band splits, not real source separation.
@@ -63,7 +63,7 @@ Graph-building methods (`createStemChain`, `createDeckFxBus`) are idempotent per
 
 **Playback rate in `useDeckAudio`.** It's read through `basePlaybackRateRef`. Never add `basePlaybackRate` back to the play/stop effect or to `syncRuntime`'s dependencies. Doing so restarts the source on every pitch move and resets it to 0:00 (fixed in R0).
 
-**Known P0 defect that needs the owner's approval before touching the audio path:** the split-mono monitor routing duplicates the master to the left channel (`audioEngine.ts`, roadmap R5).
+**Speaker routing.** Exactly one node may feed `context.destination`: the limiter (stereo) or the split-mono merger, never both (fixed in R5; it used to double the master, unlimited, on the left). Changes to the audio engine still need the owner's approval; see the roadmap for what is next.
 
 See `docs/` (research, comparison, roadmap, architecture, learning guide, implementation log) before planning audio work.
 

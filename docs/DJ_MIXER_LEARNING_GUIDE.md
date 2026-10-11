@@ -189,6 +189,7 @@ gain                     gain
 
 **Here.**
 - `masterGain` = 0.5 (−6 dB) → DynamicsCompressor limiter at −1 dB.
-- ⚠ A routing bug sends an extra, unlimited copy of the master to the left speaker, so the left measures +6.6 dB louder (roadmap R5, awaiting approval).
+- Before fix R5, an extra, unlimited copy of the master went to the left speaker, so the left measured +6.6 dB louder. The lesson: give every signal **exactly one** path to the speakers, and put the limiter last on it.
+- *Split-mono cueing* (one headphone cable, main in one ear, cue in the other) is a separate mode that replaces the stereo path; it is never added on top of it.
 
-**Try it.** After R5, play one deck with the crossfader centred: both meters should read the same.
+**Try it.** Play one deck with the crossfader centred, ideally on headphones: left and right sound equally loud.

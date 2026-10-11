@@ -4,6 +4,39 @@ Newest first. Each entry records what changed, why, how it was verified, and any
 
 ---
 
+## 2026-10-11: R5, main output routing fix (approved)
+
+**File:** `lib/audioEngine.ts` (34 lines added, 29 removed). **Status:** implemented and verified. **Not committed.**
+
+**Root cause:** the constructor connected `masterGain` to the speakers twice:
+- through the limiter (correct), and
+- through a "monitor" gain → `StereoPannerNode` path that **bypassed the limiter**.
+
+This happened even with split-mono off. Split-mono was also on by default, panned hard left at ×1.41. A stereo source into a pan = −1 panner sums L+R into the left channel, so left came out +6.6 dB louder and could clip above the limiter.
+
+**Fix:**
+- **Normal stereo (now the default):** `limiter → destination` is the only path to the speakers.
+- **Split-mono (opt-in):** `setSplitMonoEnabled(true)` disconnects that path and connects a `ChannelMerger`. The limited main mix is downmixed to mono (`channelCount 1`, "speakers" interpretation, 0.5·(L+R)) on input 0, and the cue bus is downmixed to mono on input 1. Toggling swaps which single node feeds `destination`.
+- The old panner/monitor nodes are removed.
+- No UI calls split-mono yet; R9 adds headphone cueing.
+
+**Verification.** The *real* `AudioEngine` constructor ran inside an `OfflineAudioContext`: `window.AudioContext` swapped in the page, `createMediaStreamDestination` stubbed, reverb wet = 0. Input was a 440 Hz sine at 0.5 on both channels into `masterGain`.
+
+| Configuration | Before | After |
+|---|---|---|
+| Default | L −7.85 / R −14.48 dBFS (peak 0.573 / 0.267), split-mono on | **L −14.48 / R −14.48** (0.267 / 0.267), split-mono off |
+| Default with a 0.25 cue tone | — | Unchanged: the cue doesn't reach the speakers |
+| Split-mono with a 0.25 cue tone | — | L = main 0.267, R = cue 0.250 |
+| Split-mono → stereo | — | Back to L = R −14.48 |
+
+**Live check:** master RMS 0.351 while playing, context running, recording stream present. `npm test` 12/12, `tsc` clean, lint unchanged from baseline (4 errors, 2 warnings, none in this file).
+
+**Audible effect:** the left speaker is 6.6 dB quieter than before (correct), so overall loudness drops slightly. The limiter now catches every peak that reaches the speakers.
+
+**Test tip:** a page loaded right after an edit can run a stale `next dev` bundle (seen twice). Check the live module, e.g. `String(AudioEngine.prototype.setSplitMonoEnabled).includes('splitMonoMerger')`, before trusting a measurement.
+
+---
+
 ## 2026-10-11: REA deep provider (Ghidra + JDK), approved
 
 - **Installed** (per user, no admin): Temurin JDK 21.0.12.1 and Ghidra 12.1.4 under `C:\tools`, both SHA-256 verified. `rea doctor` passes every Ghidra check.
