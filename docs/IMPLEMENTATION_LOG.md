@@ -4,6 +4,118 @@ Newest first. Each entry records what changed, why, how it was verified, and any
 
 ---
 
+## 2026-10-11: Tablet and phone layouts
+
+**Branch:** `feat/transport-clock` working tree, on top of the uncommitted R6 changes. **Status:** implemented and verified. **Not committed.** You asked for tablet and mobile versions and gave the go-ahead to keep using REA.
+
+### Research
+
+Mixxx has no phone or tablet interface; see `research/MIXXX_REVERSE_ENGINEERING.md` §8. The useful idea is `WSizeAwareStack`: hold layout variants smallest first, and show the largest one that fits.
+
+### Measured before the change
+
+| Viewport | Problem |
+| --- | --- |
+| 1024×768 (iPad landscape) | Decks stacked in one column. Page **2,266 px** tall; the mixer header started at **1,758 px**, so the crossfader was off-screen |
+| 768×1024 (iPad portrait) | Same: page 2,257 px tall |
+| 812×375 (phone landscape) | Tab bar hidden by `md:hidden`, panel not scrollable: **Deck B and the mixer unreachable** |
+| 375×812 (phone portrait) | Top bar's fullscreen button 36 px past the right edge; Audio Stats badge over the Deck A tab |
+| 1366×1024 (iPad Pro landscape) | Fine: already the three-column desktop grid |
+
+### Changes
+
+- **`lib/layoutTier.ts`** (new, pure). `layoutFitFor(width, height)` returns `{ tier, mixerPlacement }`.
+  - phone: width < 768, or landscape with height ≤ 540.
+  - tablet: width < 1280. desktop: everything wider.
+  - mixerPlacement `between` when width ≥ 960, otherwise `below`.
+- **`hooks/useLayoutFit.ts`** (new). Recomputes on resize. The first render is desktop, so server and client markup match.
+- **`app/page.tsx`**
+  - Uses the tier instead of the old media query.
+  - New `TabletLayout`: compact waveforms, then panels with their own scroll and no page scroll. Hidden panels (A / MX / B) give up their space.
+  - Phone panels scroll (`overflow-y-auto`).
+  - The Audio Stats badge shows on desktop only, since it's fixed bottom-left.
+- **`components/Mixer.tsx`**
+  - `layout="strip"`: channel A | crossfader | channel B in one row, for portrait tablets.
+  - `ChannelStrip` has a `row` layout. The column layout is unchanged.
+- **`components/ViewControls.tsx`** takes a `variant` prop:
+  - phone: bar without the panel toggles or workspace switcher (the tabs replace them).
+  - tablet: bar with the A / MX / B toggles.
+  - desktop: unchanged.
+- **`components/MobileNav.tsx`**: removed `md:hidden`; the page renders it only for the phone tier.
+- **`tests/layoutTier.test.ts`**: 5 tests, covering devices and the exact breakpoints.
+
+### Verification (dev server, built-in browser)
+
+| Viewport | Layout | Result |
+| --- | --- | --- |
+| 1024×768 | tablet, between | Panels 336 / 298 / 336 px wide, scrollWidth = clientWidth (no sideways scroll), all 638 px tall with no inner scroll |
+| 1180×820 | tablet, between | Screenshot: three columns, crossfader and both Play buttons visible |
+| 768×1024 | tablet, below | Decks 364 px wide, 647 px tall with no inner scroll; mixer strip 742×233 with no scroll |
+| 820×1180 | tablet, below | Decks 390×803, strip 794×233; page scroll 0 |
+| 812×375 | phone | Tab bar visible; the active panel scrolls |
+| 375×812 | phone | 0 elements past the right edge; tab bar visible |
+| 1440×900 | desktop | Unchanged |
+
+- No console errors.
+- `npm test` 23/23, `tsc` clean.
+- Lint at the 4-error / 2-warning baseline.
+- `npm run build` passes.
+
+**Not verified:** a real touch device. All of this is viewport emulation in Chromium; Safari on iPad was not tested.
+
+### Left open
+
+- **Touch targets:** 33 of 83 phone buttons were under 32 px when measured before this change.
+- **Phone landscape:** only about 140 px of the deck is visible at once.
+- **Tablet portrait:** the Mixer's AI crate and MIDI controls live in the tab row above the strip. They are reachable, but the strip leaves no room for the crate list.
+
+---
+
+## 2026-10-11: R6, transport clock (approved), plus pause-reset and stale-bundle fixes
+
+**Branch:** `feat/transport-clock` (from `main` @ `ce77124`, after PR #26 merged). **Status:** implemented and verified. **Not committed** at time of writing.
+
+### Changes
+
+| Item | Files | What |
+|---|---|---|
+| Transport clock | `lib/transportClock.ts` (new), `lib/audioEngine.ts` | Per-deck segments: anchor (context time, position, rate) + exact integral of `setTargetAtTime` glides + native loop wrap + clamping. Updated wherever audio is scheduled: `startStutter`, `seekTo`, `stopStutter`, `startPerformanceLoop` / `stopPerformanceLoop`, `setDeckPlaybackRate` (native and SoundTouch), `disconnectDeck`. Public API: `getDeckPosition`, `getDeckRate`, `startDeckClock`, `stopDeckClock`, `setDeckClockPosition`. |
+| Hook on the clock | `hooks/useDeckAudio.ts` | One RAF loop for both paths reads `getDeckPosition`, replacing RAF delta integration and the SoundTouch input counter. Play/pause start/stop the clock. Pause publishes the exact stop position to the store. Paused scrub, new track and end-of-track set the clock explicitly. |
+| **Pause reset bug** (pre-existing) | `hooks/useDeckAudio.ts` | The "new track → reset to 0" effect depended on `syncRuntime`, which changes on every play/pause, so each pause jumped back to 0:00. That effect now calls `syncRuntime` through a ref. |
+| Exact positions for actions | `components/Deck.tsx`, `hooks/usePerformanceFX.ts` | Beat jump, loop in/out, quantized loop start, CUE/hot-cue set and the slip-roll/beat-break origin read the clock instead of React `currentTime`. |
+| Phase-true seek | `lib/audioEngine.ts` (`seekTo`) | The new source starts 3 ms ahead (anti-click), so it now starts 3 ms × rate further into the track, which keeps beat jumps in phase. |
+| **Stale dev bundles** (root cause) | `app/page.tsx` | The service worker served `/_next/static` cache-first, so every dev page load ran the *previous* build. It is now registered only in production, and dev unregisters any installed worker. |
+| Tests | `tests/transportClock.test.ts` | 6 tests: steps, glide vs numerical integration, mid-glide retarget continuity, loop wrap, clamping, stop/seek. |
+
+### Verification
+
+**Unit:** `npm test` 18/18.
+
+**Model vs real Web Audio** (`OfflineAudioContext`, clicks every 0.25 s of track time, engine call pattern, 4 rate changes including one mid-glide):
+- glide model: max **0.24 ms**, mean 0.09 ms
+- a naive step model would be off by up to 2.54 ms
+
+**Live app (Chrome pane, real track, fresh bundle verified each time):**
+
+| Check | Result |
+|---|---|
+| Clock linearity over 2 s | 0 ms residual (store value: 539 ms of jumps; the pane delivers only ~5 RAF/s) |
+| Pitch −8 % mid-play | 0 ms jump at the change; rate 0.920 (expected 0.92) |
+| Seek while playing | Lands at the target |
+| Slip roll ¼ beat at 90 BPM | Stays inside its 0.1667 s loop; releases at origin + elapsed |
+| Pause → resume ×3 | Store = clock to 1 ms; positions monotonic (before the fix: 2.80 s → 0.00) |
+| Key lock +6 % | Clock 1.060; SoundTouch's input counter leads by ~187 ms (its buffer) |
+| End of track | Stops and parks at 0 |
+| Beat jump +4 at 90 BPM | UI click **2.6667 s** (exact); 10 programmatic jumps **0 ms** phase error (−3 ms before the seek compensation) |
+
+**Static:** `tsc` clean; lint unchanged from baseline (4 errors, 2 warnings, all pre-existing); `npm run build` succeeds.
+
+### Notes for next steps
+- R7 (sample-accurate loops) and R8 (phase sync) can now read `getDeckPosition(deck, at)` at any *future* context time, which is what scheduling on the beat needs.
+- The embedded browser pane throttles RAF to ~5/s. Measure through the engine clock, never the store.
+
+---
+
 ## 2026-10-11: R5, main output routing fix (approved)
 
 **File:** `lib/audioEngine.ts` (34 lines added, 29 removed). **Status:** implemented and verified. **Not committed.**
