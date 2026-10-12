@@ -42,6 +42,12 @@ export interface TrackBeatGrid {
 export interface Track {
   id?: number;
   sourceId?: string;
+  sourceType?: 'local' | 'r2' | 'custom-storage' | 'external';
+  provider?: 'r2' | 'custom-s3' | 'youtube' | 'soundcloud' | 'custom' | 'local';
+  externalId?: string;
+  streamUrl?: string;
+  storageKey?: string;
+  licenseStatus?: 'owned' | 'licensed' | 'user-upload' | 'unknown';
   title: string;
   artist: string;
   bpm: string;
@@ -87,7 +93,7 @@ export class DJDatabase extends Dexie {
       history: '++id, trackId, playedAt'
     });
     this.version(6).stores({
-      tracks: '++id, sourceId, title, artist, bpm, key, createdAt, audioUrl, artworkUrl',
+      tracks: '++id, sourceId, sourceType, provider, externalId, title, artist, bpm, key, createdAt, audioUrl, artworkUrl, storageKey, licenseStatus',
       cuePoints: '++id, trackId, [trackId+slot]',
       crates: '++id, &name, createdAt',
       crateTracks: '++id, crateId, trackId, [crateId+trackId]',
