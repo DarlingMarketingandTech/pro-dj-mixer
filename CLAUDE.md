@@ -17,6 +17,10 @@ Tests use no test framework or dependencies. A module under test must import cle
 
 `next.config.ts` sets `eslint.ignoreDuringBuilds: true` but `typescript.ignoreBuildErrors: false`, so type errors break `npm run build` while lint errors do not. When `DISABLE_HMR=true` (AI Studio), webpack file watching is disabled entirely.
 
+## Base path (Multi-Zones)
+
+The app runs under `basePath: '/studio/dj'` because the Piko FG site (`piko-artist-website-studio`) proxies `/studio/dj/*` here. `next/link` and the router add the prefix; raw URLs (fetch, workers, worklets, the service worker, metadata, CSS backgrounds, stored artwork URLs) must use `withBasePath` from `lib/basePath.ts`. Locally the app is at http://localhost:3000/studio/dj. Old top-level addresses redirect (see `next.config.ts`).
+
 ## Environment
 
 Server-only vars used by `app/api/vault/*`: `VAULT_KEY` (checked against the `x-syndicate-key` request header; auth is skipped if unset), `R2_ENDPOINT`, `R2_BUCKET_NAME` (default `audio`), `R2_KEY_PREFIX` (default `audio`), `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`. `NEXT_PUBLIC_VAULT_KEY` is only a UI hint on `/vault-admin` and must never be used for auth comparisons. See `.env.example`.
