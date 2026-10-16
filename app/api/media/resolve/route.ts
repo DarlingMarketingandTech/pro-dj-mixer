@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { isApprovedMediaProvider, parseProviderFromUrl } from '@/lib/mediaSources';
+import { withBasePath } from '@/lib/basePath';
 
 const API_KEY = process.env.MEDIA_PROXY_KEY || process.env.VAULT_KEY;
 
@@ -50,7 +51,7 @@ export async function POST(req: Request): Promise<NextResponse> {
     ok: true,
     provider,
     sourceUrl,
-    proxyUrl: `/api/media/stream?provider=${encodeURIComponent(provider)}&sourceUrl=${encodeURIComponent(sourceUrl)}`,
+    proxyUrl: withBasePath(`/api/media/stream?provider=${encodeURIComponent(provider)}&sourceUrl=${encodeURIComponent(sourceUrl)}`),
     licenseStatus: 'licensed',
     title: 'Resolved via media proxy',
     artist: 'Approved source',

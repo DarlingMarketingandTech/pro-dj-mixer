@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { withBasePath } from '@/lib/basePath';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -251,7 +252,7 @@ export default function VaultAdminPage() {
     let key: string;
 
     try {
-      const res = await fetch('/api/vault', {
+      const res = await fetch(withBasePath('/api/vault'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -334,7 +335,7 @@ export default function VaultAdminPage() {
       const resolvedTitle = trackTitle.trim() || titleFromFilename(selectedFile.name);
 
       try {
-        const syncRes = await fetch('/api/vault/sync', {
+        const syncRes = await fetch(withBasePath('/api/vault/sync'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -443,7 +444,7 @@ export default function VaultAdminPage() {
     if (deletingUrl) return; // prevent concurrent deletes
     setDeletingUrl(audioUrl);
     try {
-      const res = await fetch('/api/vault/delete', {
+      const res = await fetch(withBasePath('/api/vault/delete'), {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',

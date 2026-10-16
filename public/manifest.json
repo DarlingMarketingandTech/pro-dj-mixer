@@ -2,14 +2,15 @@
   "name": "PRO DJ STUDIO",
   "short_name": "DJ STUDIO",
   "description": "Cloud-native collaborative DJ performance studio.",
-  "start_url": "/",
+  "start_url": "/studio/dj",
+  "scope": "/studio/dj/",
   "display": "standalone",
   "background_color": "#050505",
   "theme_color": "#00FF00",
   "orientation": "landscape",
   "icons": [
     {
-      "src": "/favicon.ico",
+      "src": "/studio/dj/favicon.ico",
       "sizes": "48x48 32x32 16x16",
       "type": "image/x-icon"
     }

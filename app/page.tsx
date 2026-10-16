@@ -19,6 +19,7 @@ import { ViewControls } from '@/components/ViewControls';
 import { MobileNav } from '@/components/MobileNav';
 import { LibraryOverlay } from '@/components/LibraryOverlay';
 import { RecordingStatusBar } from '@/components/RecordingStatusBar';
+import { withBasePath } from '@/lib/basePath';
 
 export default function Home() {
   useKeyboardShortcuts();
@@ -58,7 +59,15 @@ export default function Home() {
 
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
-    void navigator.serviceWorker.register('/sw.js');
+    // Before the move to /studio/dj the worker was registered at /sw.js with scope "/".
+    // Retire that one so it stops intercepting the rest of the domain.
+    void navigator.serviceWorker.getRegistrations().then((registrations) => {
+      for (const registration of registrations) {
+        const script = registration.active?.scriptURL ?? registration.waiting?.scriptURL ?? registration.installing?.scriptURL;
+        if (script && new URL(script).pathname === '/sw.js') void registration.unregister();
+      }
+    });
+    void navigator.serviceWorker.register(withBasePath('/sw.js'), { scope: withBasePath('') });
   }, []);
 
   return (
