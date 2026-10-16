@@ -21,6 +21,7 @@ import { getCamelotStyles, isSmartMatch } from '@/lib/harmonic';
 import { getCompatibleKeys } from '@/lib/harmonicKeys';
 import type { Track } from '@/lib/db';
 import { useShallow } from 'zustand/react/shallow';
+import { withBasePath } from '@/lib/basePath';
 
 const WAVE_BARS = [0.55, 0.82, 0.38, 0.92, 0.65, 0.28, 0.77, 0.44, 0.88, 0.61, 0.33, 0.95, 0.50, 0.72, 0.42, 0.85];
 
@@ -325,7 +326,7 @@ export const Library = memo(function Library({ compact = false }: Readonly<{ com
   }, [loadTracks, seedLibrary, loadCrates, loadHistory]);
 
   useEffect(() => {
-    analyzerWorkerRef.current = new Worker('/workers/analyzer.worker.js');
+    analyzerWorkerRef.current = new Worker(withBasePath('/workers/analyzer.worker.js'));
     decodeAudioCtxRef.current = new AudioContext();
     return () => {
       analyzerWorkerRef.current?.terminate();

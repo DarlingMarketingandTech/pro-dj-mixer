@@ -2,6 +2,7 @@ import type {Metadata, Viewport} from 'next';
 import { Archivo_Black, Inter, JetBrains_Mono } from 'next/font/google';
 import { Toaster } from 'react-hot-toast';
 import './globals.css'; // Global styles
+import { withBasePath } from '@/lib/basePath';
 
 const archivoBlack = Archivo_Black({
   subsets: ['latin'],
@@ -22,9 +23,9 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: 'PRO DJ STUDIO',
   description: 'Virtual DJ Studio',
-  manifest: '/manifest.json',
+  manifest: withBasePath('/manifest.json'),
   icons: {
-    icon: '/favicon.ico',
+    icon: withBasePath('/favicon.ico'),
   },
 };
 

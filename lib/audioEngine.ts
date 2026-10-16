@@ -1,3 +1,5 @@
+import { withBasePath } from '@/lib/basePath';
+
 export type StemType = 'drums' | 'inst' | 'vocals';
 export type NeuralStemGains = Record<StemType, { a: number; b: number }>;
 const NEURAL_STEM_GAIN = 1.0; // 1.0 since stems are now frequency-isolated 
@@ -551,7 +553,7 @@ export class AudioEngine {
     }
 
     try {
-      await this.context.audioWorklet.addModule('/worklets/bitcrusher-processor.js');
+      await this.context.audioWorklet.addModule(withBasePath('/worklets/bitcrusher-processor.js'));
       return true;
     } catch (error) {
       if (!this.workletWarningLogged) {
@@ -744,7 +746,7 @@ export class AudioEngine {
   private async loadBunkerImpulse() {
     if (this.bunkerImpulseLoaded) return;
     try {
-      const res = await fetch('/impulses/concrete-bunker.wav');
+      const res = await fetch(withBasePath('/impulses/concrete-bunker.wav'));
       if (!res.ok) throw new Error('Failed IR fetch');
       const array = await res.arrayBuffer();
       this.bunkerConvolver.buffer = await this.context.decodeAudioData(array.slice(0));

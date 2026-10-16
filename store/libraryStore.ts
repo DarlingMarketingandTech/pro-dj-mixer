@@ -4,6 +4,7 @@ import { BEAT_GRID_VERSION, formatBpm } from '@/lib/beatGrid';
 import { broadcastLibraryRefresh } from '@/lib/syncManager';
 import toast from 'react-hot-toast';
 import type { AnalysisRequest, AnalysisResponse } from '@/lib/analysisWorker';
+import { withBasePath } from '@/lib/basePath';
 
 const R2_BASE = 'https://pub-9d6c022e6cbf422ea4fcac0a116cbfce.r2.dev/audio';
 export const PIKO_VAULT_TRACKS = [
@@ -144,26 +145,26 @@ const mockAnalysis = async (file: File | string) => {
 let isSeeding = false;
 
 const seedArtworkUrls = [
-  '/track-images/abstract-1846847_1280.jpg',
-  '/track-images/architecture-3189972_1280.jpg',
-  '/track-images/aurora-borealis-9267515_1280.jpg',
-  '/track-images/background-1833056_1280.jpg',
-  '/track-images/bicycle-3045580_1280.jpg',
-  '/track-images/dj-2581269_1280.jpg',
-  '/track-images/gong-8255081_1280.jpg',
-  '/track-images/graffiti-1476119_1280.jpg',
-  '/track-images/graffiti-3750912_1280.jpg',
-  '/track-images/hamburg-2718329_1280.jpg',
-  '/track-images/love-2724141_1280.png',
-  '/track-images/skateboard-447147_1280.jpg',
-  '/track-images/skull-and-crossbones-414207_1280.jpg',
-  '/track-images/starry-sky-1655503_1280.jpg',
-  '/track-images/street-art-1499524_1280.jpg',
-  '/track-images/tube-7260586_1280.jpg',
-  '/track-images/vinyl-1595847_1280.jpg',
-  '/track-images/wall-2583885_1280.jpg',
-  '/track-images/wallpaper-5928106_1280.png',
-  '/track-images/woman-3633737_1280.jpg'
+  withBasePath('/track-images/abstract-1846847_1280.jpg'),
+  withBasePath('/track-images/architecture-3189972_1280.jpg'),
+  withBasePath('/track-images/aurora-borealis-9267515_1280.jpg'),
+  withBasePath('/track-images/background-1833056_1280.jpg'),
+  withBasePath('/track-images/bicycle-3045580_1280.jpg'),
+  withBasePath('/track-images/dj-2581269_1280.jpg'),
+  withBasePath('/track-images/gong-8255081_1280.jpg'),
+  withBasePath('/track-images/graffiti-1476119_1280.jpg'),
+  withBasePath('/track-images/graffiti-3750912_1280.jpg'),
+  withBasePath('/track-images/hamburg-2718329_1280.jpg'),
+  withBasePath('/track-images/love-2724141_1280.png'),
+  withBasePath('/track-images/skateboard-447147_1280.jpg'),
+  withBasePath('/track-images/skull-and-crossbones-414207_1280.jpg'),
+  withBasePath('/track-images/starry-sky-1655503_1280.jpg'),
+  withBasePath('/track-images/street-art-1499524_1280.jpg'),
+  withBasePath('/track-images/tube-7260586_1280.jpg'),
+  withBasePath('/track-images/vinyl-1595847_1280.jpg'),
+  withBasePath('/track-images/wall-2583885_1280.jpg'),
+  withBasePath('/track-images/wallpaper-5928106_1280.png'),
+  withBasePath('/track-images/woman-3633737_1280.jpg')
 ];
 
 const pickRandomArtworkUrl = () => {

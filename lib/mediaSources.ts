@@ -1,3 +1,5 @@
+import { withBasePath } from '@/lib/basePath';
+
 export type MediaSourceType = 'local' | 'r2' | 'custom-storage' | 'external';
 export type MediaProvider = 'r2' | 'custom-s3' | 'youtube' | 'soundcloud' | 'custom' | 'local';
 export type MediaLicenseStatus = 'owned' | 'licensed' | 'user-upload' | 'unknown';
@@ -37,7 +39,7 @@ export const buildMediaProxyUrl = (provider: string, sourceUrl: string) => {
     provider,
     sourceUrl,
   });
-  return `/api/media/stream?${params.toString()}`;
+  return withBasePath(`/api/media/stream?${params.toString()}`);
 };
 
 export const normalizeMediaSource = (input: {
