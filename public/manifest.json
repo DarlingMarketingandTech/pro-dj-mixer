@@ -3,7 +3,7 @@
   "short_name": "DJ STUDIO",
   "description": "Cloud-native collaborative DJ performance studio.",
   "start_url": "/studio/dj",
-  "scope": "/studio/dj/",
+  "scope": "/studio/dj",
   "display": "standalone",
   "background_color": "#050505",
   "theme_color": "#00FF00",

@@ -21,11 +21,13 @@ self.addEventListener('install', (event) => {
   self.skipWaiting();
 });
 
+// Cache Storage is shared by the whole origin (the Piko FG site and any other zone),
+// so only ever delete this mixer's own old caches.
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) => Promise.all(
       keys
-        .filter((key) => ![CACHE_NAME, STATIC_CACHE_NAME].includes(key))
+        .filter((key) => key.startsWith('pro-dj-studio') && ![CACHE_NAME, STATIC_CACHE_NAME].includes(key))
         .map((key) => caches.delete(key))
     ))
   );
