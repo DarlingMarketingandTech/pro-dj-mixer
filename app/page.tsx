@@ -52,22 +52,26 @@ export default function Home() {
 
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
+    // Only this app's workers: the current one under /studio/dj, and the root /sw.js it used
+    // before the move (which would otherwise keep intercepting the rest of the domain).
+    // getRegistrations() returns every worker on the origin, including other apps' workers.
+    const ownWorkerPaths = new Set([withBasePath('/sw.js'), '/sw.js']);
+    const unregisterOwn = (keep: string | null) =>
+      navigator.serviceWorker.getRegistrations().then((registrations) => {
+        for (const registration of registrations) {
+          const script = registration.active?.scriptURL ?? registration.waiting?.scriptURL ?? registration.installing?.scriptURL;
+          const path = script ? new URL(script).pathname : null;
+          if (path && ownWorkerPaths.has(path) && path !== keep) void registration.unregister();
+        }
+      });
     // The worker serves /_next/static cache-first; dev chunk URLs never change, so in development
     // every load would run the previous build. Only register it in production, and remove any
-    // worker a dev session already installed.
+    // worker of ours a dev session already installed.
     if (process.env.NODE_ENV !== 'production') {
-      void navigator.serviceWorker.getRegistrations().then((registrations) =>
-        registrations.forEach((registration) => void registration.unregister()));
+      void unregisterOwn(null);
       return;
     }
-    // Before the move to /studio/dj the worker was registered at /sw.js with scope "/".
-    // Retire that one so it stops intercepting the rest of the domain.
-    void navigator.serviceWorker.getRegistrations().then((registrations) => {
-      for (const registration of registrations) {
-        const script = registration.active?.scriptURL ?? registration.waiting?.scriptURL ?? registration.installing?.scriptURL;
-        if (script && new URL(script).pathname === '/sw.js') void registration.unregister();
-      }
-    });
+    void unregisterOwn(withBasePath('/sw.js'));
     void navigator.serviceWorker.register(withBasePath('/sw.js'), { scope: withBasePath('') });
   }, []);
 
@@ -96,15 +100,17 @@ export default function Home() {
                 <ParallelWaveforms compact />
               </div>
 
-              {/* The active panel scrolls when it is taller than the screen (a phone on its side). */}
+              {/* The active panel scrolls when it is taller than the screen (a phone on its side).
+                  The tabs pick the panel, so the larger layouts' show/hide toggles don't apply here:
+                  the phone toolbar has no way to bring a hidden panel back. */}
               <div className={activeTab === 'DECK_A' ? PHONE_PANEL : 'hidden'}>
-                {isDeckAVisible && <Deck deckId="A" compact />}
+                <Deck deckId="A" compact />
               </div>
               <div className={activeTab === 'MIXER' ? PHONE_PANEL : 'hidden'}>
-                {isMixerVisible && <Mixer compact />}
+                <Mixer compact />
               </div>
               <div className={activeTab === 'DECK_B' ? PHONE_PANEL : 'hidden'}>
-                {isDeckBVisible && <Deck deckId="B" compact />}
+                <Deck deckId="B" compact />
               </div>
             </>
           ) : tier === 'tablet' ? (
