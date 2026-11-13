@@ -12,7 +12,16 @@ function formatElapsed(seconds: number): string {
   return `${m}:${s}`;
 }
 
-export function ViewControls({ compact = false }: Readonly<{ compact?: boolean }>) {
+/**
+ * phone: full-width bar; the bottom tabs pick the panel, so the panel toggles and workspace
+ * switcher are left out (they also pushed the bar off a 375 px screen).
+ * tablet: full-width bar with the A / MX / B panel toggles.
+ * desktop: floating pill with everything.
+ */
+export function ViewControls({ variant = 'desktop' }: Readonly<{ variant?: 'phone' | 'tablet' | 'desktop' }>) {
+  const compact = variant !== 'desktop';
+  const showPanelToggles = variant !== 'phone';
+  const showWorkspaceSwitcher = variant === 'desktop';
   const {
     isWaveformVisible,
     isDeckAVisible,
@@ -70,6 +79,7 @@ export function ViewControls({ compact = false }: Readonly<{ compact?: boolean }
         <PanelTop className="w-4 h-4" />
       </button>
 
+      {showPanelToggles && (<>
       <div className="w-px h-4 bg-slate-700 mx-1"></div>
 
       <button
@@ -110,7 +120,9 @@ export function ViewControls({ compact = false }: Readonly<{ compact?: boolean }
       >
         B
       </button>
+      </>)}
 
+      {showWorkspaceSwitcher && (<>
       <div className="w-px h-4 bg-slate-700 mx-1"></div>
 
       {/* Workspace Switcher */}
@@ -152,6 +164,7 @@ export function ViewControls({ compact = false }: Readonly<{ compact?: boolean }
           <Library className="w-4 h-4" />
         </button>
       </div>
+      </>)}
 
       <div className="w-px h-4 bg-slate-700 mx-1"></div>
 
