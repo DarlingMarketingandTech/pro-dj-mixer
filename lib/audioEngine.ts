@@ -1169,11 +1169,22 @@ export class AudioEngine {
     const node = this.context.createScriptProcessor(BLOCK, 2, 2);
     const samples = new Float32Array(BLOCK * 2);
     const deck = this.decks[deckId];
+    // Track position of the first frame of the next block. SoundTouch reads ahead of what is
+    // heard (filter.sourcePosition leads by its buffering), so the transport clock is anchored to
+    // the output instead: each block holds frames × tempo of track time.
+    let blockPosition = startPositionSec;
+    let firstBlock = true;
 
     node.onaudioprocess = (e: AudioProcessingEvent) => {
       const left = e.outputBuffer.getChannelData(0);
       const right = e.outputBuffer.getChannelData(1);
+      const blockTempo = soundTouch.tempo;
       const framesExtracted = filter.extract(samples, BLOCK);
+      if (framesExtracted > 0) {
+        this.anchorKeyLockClock(deckId, blockPosition, blockTempo, e.playbackTime, firstBlock);
+        firstBlock = false;
+        blockPosition += (framesExtracted / buffer.sampleRate) * blockTempo;
+      }
 
       for (let i = 0; i < framesExtracted; i++) {
         left[i] = samples[i * 2];
@@ -1194,6 +1205,23 @@ export class AudioEngine {
 
     this.deckKeyLockEngines[deckId] = { node, filter, soundTouch, buffer };
     return node;
+  }
+
+  /**
+   * Point a Key Lock deck's transport clock at the audio it plays: the block starting at
+   * `position` is heard at context time `playAt` (AudioProcessingEvent.playbackTime), which is
+   * ahead of now by the processor's buffering.
+   */
+  private anchorKeyLockClock(deckId: 'A' | 'B', position: number, rate: number, playAt: number, firstBlock: boolean) {
+    const now = this.context.currentTime;
+    if (firstBlock || playAt <= now) {
+      // Nothing from this node is audible before its first block, so the playhead waits for it.
+      this.clocks[deckId] = startSegment(this.clockFor(deckId), position, rate, playAt);
+      return;
+    }
+    // Earlier blocks are still playing until `playAt`: express the same anchor at `now` so the
+    // playhead keeps moving through them instead of waiting.
+    this.clocks[deckId] = startSegment(this.clockFor(deckId), Math.max(0, position - rate * (playAt - now)), rate, now);
   }
 
   /**

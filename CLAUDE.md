@@ -70,6 +70,8 @@ Graph-building methods (`createStemChain`, `createDeckFxBus`) are idempotent per
 **Transport clock.** `lib/transportClock.ts` is pure and tested, and `AudioEngine.getDeckPosition(deck, at?)` reads it.
 - **The exact playhead.** Every engine method that schedules audio (start/stop/seek/stutter/loops/rate) must update `this.clocks[deck]` at the same moment.
 - **Position-critical actions read the clock.** That covers beat jump, loop points, cue set and the slip origin. `deckStore.currentTime` is a 30 Hz display value only.
+- **Key Lock (SoundTouch) decks.** `initKeyLockEngine` re-anchors the clock on every processor block to `AudioProcessingEvent.playbackTime`, so it follows what is heard. Don't use `getKeyLockPosition()` (`filter.sourcePosition`) as the playhead: it reads 250–450 ms ahead of the output.
+- **Remounts.** The tablet and phone layouts remount the decks on resize. `useDeckAudio` keeps the position for the same track (module-level `deckMedia`), restarts a playing deck once its graph is rebuilt (`graphVersion`), and detaches the old EQ/analyser on unmount.
 - **`syncRuntime` changes identity on every play/pause.** Effects that must run only for a new track call it via `syncRuntimeRef`; otherwise every pause resets the position to 0:00.
 
 **Dev server gotcha.** `public/sw.js` is registered only in production. A worker left installed in a dev browser serves the previous build. Unregister it if behaviour doesn't match the source.

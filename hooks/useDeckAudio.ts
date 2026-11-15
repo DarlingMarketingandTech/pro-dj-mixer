@@ -4,6 +4,13 @@ import { useMixerStore } from '@/store/mixerStore';
 import { AudioEngine, calculateNeuralGains } from '@/lib/audioEngine';
 import { useShallow } from 'zustand/react/shallow';
 
+/**
+ * The media each deck's hook last saw, kept outside React. The tablet and phone layouts put the
+ * decks in different parent trees, so a resize or rotation remounts them; a remount with the same
+ * track resumes from the engine's transport clock, while a new track starts at 0:00.
+ */
+const deckMedia: Partial<Record<'A' | 'B', { track: unknown; buffer: AudioBuffer | null }>> = {};
+
 interface AudioDataSnapshot {
   rms: number;
   low: number;
@@ -49,8 +56,12 @@ export function useDeckAudio(deckId: 'A' | 'B') {
   const lastStoreTimeCommitRef = useRef<number>(0);
   const lastUiTimePaintRef = useRef<number>(0);
   const animationRef = useRef<number | null>(null);
+  const graphBuiltRef = useRef(false);
 
   const [currentTime, setCurrentTime] = useState(0);
+  // Bumped when this mount's audio graph is ready. Playback can't start before that, so a deck
+  // that remounts while playing restarts once its graph exists.
+  const [graphVersion, setGraphVersion] = useState(0);
   const basePlaybackRate = Math.max(0.5, Math.min(2.0, 1 + deckState.pitchPercent / 100));
   // Callbacks and effects that start, stop or reset playback read the rate through this ref, so a
   // pitch move never re-runs them (that used to restart the track from 0:00 at rate 1.0).
@@ -121,6 +132,7 @@ export function useDeckAudio(deckId: 'A' | 'B') {
       engine.registerDeckAnalyser(deckId, analyserRef.current);
 
       deckGainRef.current = fxBusRef.current.deckGain;
+      graphBuiltRef.current = true;
 
       // Connect source -> stem routing -> [direct + FX send] -> EQ/analyser/master
       stemChainRef.current.output.connect(eqChainRef.current.input);
@@ -133,6 +145,10 @@ export function useDeckAudio(deckId: 'A' | 'B') {
     void setupGraph().then(() => {
       if (cancelled) return;
       syncRuntime();
+      if (deckGainRef.current && graphBuiltRef.current) {
+        graphBuiltRef.current = false;
+        setGraphVersion((v) => v + 1);
+      }
 
       if (deckGainRef.current) {
         // Volume is managed by a separate isolated useEffect to prevent graph rebuilds
@@ -180,6 +196,26 @@ export function useDeckAudio(deckId: 'A' | 'B') {
     };
   }, [deckId, deckState.stems, crossfader, crossfaderCurve, eqState, syncRuntime]);
 
+  // On unmount, detach this mount's EQ and analyser from the engine's cached stem chain and FX
+  // bus. A remount (layout switch) wires a new EQ to those same nodes, so the old EQ path must not
+  // stay connected beside it.
+  useEffect(() => {
+    const graph = { stemChainRef, fxBusRef, eqChainRef, analyserRef, deckGainRef, dataArrayRef };
+    return () => {
+      const eq = graph.eqChainRef.current;
+      if (eq) {
+        try { graph.stemChainRef.current?.output.disconnect(eq.input); } catch { /* not connected */ }
+        try { graph.fxBusRef.current?.output.disconnect(eq.input); } catch { /* not connected */ }
+        eq.output.disconnect();
+      }
+      graph.analyserRef.current?.disconnect();
+      graph.eqChainRef.current = null;
+      graph.analyserRef.current = null;
+      graph.deckGainRef.current = null;
+      graph.dataArrayRef.current = null;
+    };
+  }, []);
+
   // Apply volume changes to the deck gain node immediately
   useEffect(() => {
     if (!deckGainRef.current) return;
@@ -188,7 +224,8 @@ export function useDeckAudio(deckId: 'A' | 'B') {
     const xGain = deckId === 'A' ? gainA : gainB;
     const targetGain = mixerVolume * xGain;
     deckGainRef.current.gain.setTargetAtTime(Math.max(0, targetGain), engine.context.currentTime, 0.02);
-  }, [mixerVolume, crossfader, crossfaderCurve, deckId]);
+    // graphVersion: apply the current level to a graph rebuilt after a remount.
+  }, [mixerVolume, crossfader, crossfaderCurve, deckId, graphVersion]);
 
   useEffect(() => {
     const engine = AudioEngine.getInstance();
@@ -320,7 +357,8 @@ export function useDeckAudio(deckId: 'A' | 'B') {
     return () => {
       stopAudio();
     };
-  }, [commitDeckTime, deckId, deckState.buffer, deckState.isPlaying, deckState.keyLock, syncRuntime, togglePlay]);
+    // graphVersion: re-run once the graph exists, so a deck remounted while playing restarts.
+  }, [commitDeckTime, deckId, deckState.buffer, deckState.isPlaying, deckState.keyLock, graphVersion, syncRuntime, togglePlay]);
 
   useEffect(() => {
     // Update tempo for both native (AudioBufferSourceNode) and SoundTouch paths.
@@ -338,17 +376,25 @@ export function useDeckAudio(deckId: 'A' | 'B') {
     });
   }, [deckId, deckState.track?.id, deckState.track?.bpm]);
 
-  // Reset pause time when a new track is loaded
+  // A new track (or a new decode of one) starts at 0:00; a remount with the same media resumes
+  // where the engine's clock is. This also runs when the buffer lands: loadTrack sets `track`
+  // before decoding, while the old buffer may still be playing and moving the clock. The play/stop
+  // effect above runs first in that commit, so its stop is saved before this zeroes it.
   useEffect(() => {
-    pauseTimeRef.current = 0;
-    currentTimeRef.current = 0;
-    lastUiTimePaintRef.current = 0;
-    AudioEngine.getInstance().setDeckClockPosition(deckId, 0);
-    const timer = setTimeout(() => setCurrentTime(0), 0);
+    const engine = AudioEngine.getInstance();
+    const seen = deckMedia[deckId];
+    const sameMedia = seen !== undefined && seen.track === deckState.track && seen.buffer === deckState.buffer;
+    deckMedia[deckId] = { track: deckState.track, buffer: deckState.buffer };
+    const position = sameMedia ? engine.getDeckPosition(deckId) : 0;
+    if (!sameMedia) engine.setDeckClockPosition(deckId, 0);
+    pauseTimeRef.current = position;
+    currentTimeRef.current = position;
+    lastUiTimePaintRef.current = position;
+    const timer = setTimeout(() => setCurrentTime(position), 0);
     syncRuntimeRef.current();
-    commitDeckTime(0, true);
+    commitDeckTime(position, true);
     return () => clearTimeout(timer);
-  }, [commitDeckTime, deckId, deckState.track]);
+  }, [commitDeckTime, deckId, deckState.track, deckState.buffer]);
 
   const scrubTrack = useCallback((timeDelta: number) => {
     if (!deckState.buffer) return;
