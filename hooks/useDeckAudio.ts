@@ -4,6 +4,13 @@ import { useMixerStore } from '@/store/mixerStore';
 import { AudioEngine, calculateNeuralGains } from '@/lib/audioEngine';
 import { useShallow } from 'zustand/react/shallow';
 
+/**
+ * The media each deck's hook last saw, kept outside React. The tablet and phone layouts put the
+ * decks in different parent trees, so a resize or rotation remounts them; a remount with the same
+ * track resumes from the engine's transport clock, while a new track starts at 0:00.
+ */
+const deckMedia: Partial<Record<'A' | 'B', { track: unknown; buffer: AudioBuffer | null }>> = {};
+
 interface AudioDataSnapshot {
   rms: number;
   low: number;
@@ -46,12 +53,15 @@ export function useDeckAudio(deckId: 'A' | 'B') {
 
   const pauseTimeRef = useRef<number>(0);
   const currentTimeRef = useRef<number>(0);
-  const lastContextTimeRef = useRef<number>(0);
   const lastStoreTimeCommitRef = useRef<number>(0);
   const lastUiTimePaintRef = useRef<number>(0);
   const animationRef = useRef<number | null>(null);
+  const graphBuiltRef = useRef(false);
 
   const [currentTime, setCurrentTime] = useState(0);
+  // Bumped when this mount's audio graph is ready. Playback can't start before that, so a deck
+  // that remounts while playing restarts once its graph exists.
+  const [graphVersion, setGraphVersion] = useState(0);
   const basePlaybackRate = Math.max(0.5, Math.min(2.0, 1 + deckState.pitchPercent / 100));
   // Callbacks and effects that start, stop or reset playback read the rate through this ref, so a
   // pitch move never re-runs them (that used to restart the track from 0:00 at rate 1.0).
@@ -81,9 +91,8 @@ export function useDeckAudio(deckId: 'A' | 'B') {
         pauseTime: pauseTimeRef.current,
         currentTime: currentTimeRef.current,
       onSourceSwap: (next) => {
+        // The engine has already moved its transport clock; just track the live node.
         sourceRef.current = next;
-        lastContextTimeRef.current = engine.context.currentTime;
-        currentTimeRef.current = pauseTimeRef.current;
       },
       onPauseTime: (nextTime) => {
         pauseTimeRef.current = nextTime;
@@ -94,6 +103,12 @@ export function useDeckAudio(deckId: 'A' | 'B') {
       }
     });
   }, [commitDeckTime, deckId, deckState.buffer, deckState.isPlaying]);
+  // syncRuntime changes identity on every play/pause. Effects that must only run for a *new track*
+  // call it through this ref; depending on it directly reset the position to 0:00 on every pause.
+  const syncRuntimeRef = useRef(syncRuntime);
+  useEffect(() => {
+    syncRuntimeRef.current = syncRuntime;
+  }, [syncRuntime]);
 
   useEffect(() => {
     const engine = AudioEngine.getInstance();
@@ -117,6 +132,7 @@ export function useDeckAudio(deckId: 'A' | 'B') {
       engine.registerDeckAnalyser(deckId, analyserRef.current);
 
       deckGainRef.current = fxBusRef.current.deckGain;
+      graphBuiltRef.current = true;
 
       // Connect source -> stem routing -> [direct + FX send] -> EQ/analyser/master
       stemChainRef.current.output.connect(eqChainRef.current.input);
@@ -129,6 +145,10 @@ export function useDeckAudio(deckId: 'A' | 'B') {
     void setupGraph().then(() => {
       if (cancelled) return;
       syncRuntime();
+      if (deckGainRef.current && graphBuiltRef.current) {
+        graphBuiltRef.current = false;
+        setGraphVersion((v) => v + 1);
+      }
 
       if (deckGainRef.current) {
         // Volume is managed by a separate isolated useEffect to prevent graph rebuilds
@@ -176,6 +196,26 @@ export function useDeckAudio(deckId: 'A' | 'B') {
     };
   }, [deckId, deckState.stems, crossfader, crossfaderCurve, eqState, syncRuntime]);
 
+  // On unmount, detach this mount's EQ and analyser from the engine's cached stem chain and FX
+  // bus. A remount (layout switch) wires a new EQ to those same nodes, so the old EQ path must not
+  // stay connected beside it.
+  useEffect(() => {
+    const graph = { stemChainRef, fxBusRef, eqChainRef, analyserRef, deckGainRef, dataArrayRef };
+    return () => {
+      const eq = graph.eqChainRef.current;
+      if (eq) {
+        try { graph.stemChainRef.current?.output.disconnect(eq.input); } catch { /* not connected */ }
+        try { graph.fxBusRef.current?.output.disconnect(eq.input); } catch { /* not connected */ }
+        eq.output.disconnect();
+      }
+      graph.analyserRef.current?.disconnect();
+      graph.eqChainRef.current = null;
+      graph.analyserRef.current = null;
+      graph.deckGainRef.current = null;
+      graph.dataArrayRef.current = null;
+    };
+  }, []);
+
   // Apply volume changes to the deck gain node immediately
   useEffect(() => {
     if (!deckGainRef.current) return;
@@ -184,18 +224,22 @@ export function useDeckAudio(deckId: 'A' | 'B') {
     const xGain = deckId === 'A' ? gainA : gainB;
     const targetGain = mixerVolume * xGain;
     deckGainRef.current.gain.setTargetAtTime(Math.max(0, targetGain), engine.context.currentTime, 0.02);
-  }, [mixerVolume, crossfader, crossfaderCurve, deckId]);
+    // graphVersion: apply the current level to a graph rebuilt after a remount.
+  }, [mixerVolume, crossfader, crossfaderCurve, deckId, graphVersion]);
 
   useEffect(() => {
     const engine = AudioEngine.getInstance();
 
     const stopAudio = () => {
-      // Always persist the latest playback position before tearing down the source.
+      // Persist the exact position from the engine's transport clock before tearing down.
       if (sourceRef.current || keyLockNodeRef.current) {
-        pauseTimeRef.current = keyLockNodeRef.current
-          ? engine.getKeyLockPosition(deckId)
-          : currentTimeRef.current;
-        currentTimeRef.current = pauseTimeRef.current;
+        const stoppedAt = engine.stopDeckClock(deckId);
+        pauseTimeRef.current = stoppedAt;
+        currentTimeRef.current = stoppedAt;
+        lastUiTimePaintRef.current = stoppedAt;
+        // Publish the exact stop position (the throttled RAF commit may be a frame or more behind).
+        setCurrentTime(stoppedAt);
+        commitDeckTime(stoppedAt, true);
       }
 
       if (sourceRef.current) {
@@ -226,6 +270,37 @@ export function useDeckAudio(deckId: 'A' | 'B') {
       syncRuntime();
     };
 
+    // One RAF loop for both playback paths: the position is computed by the engine's transport
+    // clock, so seeks, stutters, loops and rate glides are reflected exactly.
+    const startPlayheadLoop = () => {
+      const updateTime = () => {
+        if (!deckState.isPlaying || !deckState.buffer || (!sourceRef.current && !keyLockNodeRef.current)) return;
+        const newTime = engine.getDeckPosition(deckId);
+        currentTimeRef.current = newTime;
+        // Keep transport text/playhead responsive while avoiding full deck rerenders every RAF.
+        if (Math.abs(newTime - lastUiTimePaintRef.current) >= 1 / 45) {
+          lastUiTimePaintRef.current = newTime;
+          setCurrentTime(newTime);
+        }
+        commitDeckTime(newTime);
+
+        if (newTime >= deckState.buffer.duration) {
+          // End of track: park the clock at 0 before the play/stop effect persists the position.
+          engine.stopDeckClock(deckId);
+          engine.setDeckClockPosition(deckId, 0);
+          togglePlay(deckId);
+          pauseTimeRef.current = 0;
+          currentTimeRef.current = 0;
+          lastUiTimePaintRef.current = 0;
+          setCurrentTime(0);
+          commitDeckTime(0, true);
+        } else {
+          animationRef.current = requestAnimationFrame(updateTime);
+        }
+      };
+      animationRef.current = requestAnimationFrame(updateTime);
+    };
+
     const playAudio = async () => {
       if (!deckState.buffer || !eqChainRef.current || !stemChainRef.current || !fxBusRef.current) return;
 
@@ -244,35 +319,11 @@ export function useDeckAudio(deckId: 'A' | 'B') {
         if (klNode) {
           keyLockNodeRef.current = klNode;
           klNode.connect(stemChainRef.current.input);
+          engine.startDeckClock(deckId, pauseTimeRef.current, basePlaybackRateRef.current);
           engine.setDeckPlaybackRate(deckId, basePlaybackRateRef.current);
           syncRuntime();
           currentTimeRef.current = pauseTimeRef.current;
-          lastContextTimeRef.current = engine.context.currentTime;
-
-          const updateTime = () => {
-            if (deckState.isPlaying && deckState.buffer && keyLockNodeRef.current) {
-              // Position comes directly from the SoundTouch filter's source counter.
-              const newTime = engine.getKeyLockPosition(deckId);
-              if (Math.abs(newTime - lastUiTimePaintRef.current) >= 1 / 45) {
-                lastUiTimePaintRef.current = newTime;
-                setCurrentTime(newTime);
-              }
-              commitDeckTime(newTime);
-
-              if (newTime >= deckState.buffer.duration) {
-                togglePlay(deckId);
-                pauseTimeRef.current = 0;
-                currentTimeRef.current = 0;
-                lastUiTimePaintRef.current = 0;
-                setCurrentTime(0);
-                commitDeckTime(0, true);
-              } else {
-                animationRef.current = requestAnimationFrame(updateTime);
-              }
-            }
-          };
-
-          animationRef.current = requestAnimationFrame(updateTime);
+          startPlayheadLoop();
           return;
         }
         // SoundTouch unavailable — fall through to native path below.
@@ -287,57 +338,27 @@ export function useDeckAudio(deckId: 'A' | 'B') {
       // Connect source to stem crossover input
       sourceRef.current.connect(stemChainRef.current.input);
 
-      sourceRef.current.start(0, pauseTimeRef.current);
+      const startAt = engine.context.currentTime;
+      sourceRef.current.start(startAt, pauseTimeRef.current);
+      engine.startDeckClock(deckId, pauseTimeRef.current, basePlaybackRateRef.current, startAt);
 
       syncRuntime();
 
       currentTimeRef.current = pauseTimeRef.current;
-      lastContextTimeRef.current = engine.context.currentTime;
-
-      const updateTime = () => {
-        if (deckState.isPlaying && deckState.buffer && sourceRef.current) {
-          const now = engine.context.currentTime;
-          const delta = now - lastContextTimeRef.current;
-          lastContextTimeRef.current = now;
-
-          const newTime = currentTimeRef.current + delta * sourceRef.current.playbackRate.value;
-          currentTimeRef.current = newTime;
-          // Keep transport text/playhead responsive while avoiding full deck rerenders every RAF.
-          if (Math.abs(newTime - lastUiTimePaintRef.current) >= 1 / 45) {
-            lastUiTimePaintRef.current = newTime;
-            setCurrentTime(newTime);
-          }
-          commitDeckTime(newTime);
-
-          if (newTime >= deckState.buffer.duration) {
-            togglePlay(deckId);
-            pauseTimeRef.current = 0;
-            currentTimeRef.current = 0;
-            lastUiTimePaintRef.current = 0;
-            setCurrentTime(0);
-            commitDeckTime(0, true);
-          } else {
-            animationRef.current = requestAnimationFrame(updateTime);
-          }
-        }
-      };
-
-      animationRef.current = requestAnimationFrame(updateTime);
+      startPlayheadLoop();
     };
 
     if (deckState.isPlaying) {
       playAudio();
     } else {
-      if (sourceRef.current) {
-        pauseTimeRef.current = currentTimeRef.current;
-      }
       stopAudio();
     }
 
     return () => {
       stopAudio();
     };
-  }, [commitDeckTime, deckId, deckState.buffer, deckState.isPlaying, deckState.keyLock, syncRuntime, togglePlay]);
+    // graphVersion: re-run once the graph exists, so a deck remounted while playing restarts.
+  }, [commitDeckTime, deckId, deckState.buffer, deckState.isPlaying, deckState.keyLock, graphVersion, syncRuntime, togglePlay]);
 
   useEffect(() => {
     // Update tempo for both native (AudioBufferSourceNode) and SoundTouch paths.
@@ -355,16 +376,25 @@ export function useDeckAudio(deckId: 'A' | 'B') {
     });
   }, [deckId, deckState.track?.id, deckState.track?.bpm]);
 
-  // Reset pause time when a new track is loaded
+  // A new track (or a new decode of one) starts at 0:00; a remount with the same media resumes
+  // where the engine's clock is. This also runs when the buffer lands: loadTrack sets `track`
+  // before decoding, while the old buffer may still be playing and moving the clock. The play/stop
+  // effect above runs first in that commit, so its stop is saved before this zeroes it.
   useEffect(() => {
-    pauseTimeRef.current = 0;
-    currentTimeRef.current = 0;
-    lastUiTimePaintRef.current = 0;
-    const timer = setTimeout(() => setCurrentTime(0), 0);
-    syncRuntime();
-    commitDeckTime(0, true);
+    const engine = AudioEngine.getInstance();
+    const seen = deckMedia[deckId];
+    const sameMedia = seen !== undefined && seen.track === deckState.track && seen.buffer === deckState.buffer;
+    deckMedia[deckId] = { track: deckState.track, buffer: deckState.buffer };
+    const position = sameMedia ? engine.getDeckPosition(deckId) : 0;
+    if (!sameMedia) engine.setDeckClockPosition(deckId, 0);
+    pauseTimeRef.current = position;
+    currentTimeRef.current = position;
+    lastUiTimePaintRef.current = position;
+    const timer = setTimeout(() => setCurrentTime(position), 0);
+    syncRuntimeRef.current();
+    commitDeckTime(position, true);
     return () => clearTimeout(timer);
-  }, [commitDeckTime, deckId, deckState.track, syncRuntime]);
+  }, [commitDeckTime, deckId, deckState.track, deckState.buffer]);
 
   const scrubTrack = useCallback((timeDelta: number) => {
     if (!deckState.buffer) return;
@@ -375,6 +405,7 @@ export function useDeckAudio(deckId: 'A' | 'B') {
       pauseTimeRef.current = newTime;
       currentTimeRef.current = newTime;
       lastUiTimePaintRef.current = newTime;
+      AudioEngine.getInstance().setDeckClockPosition(deckId, newTime);
       setCurrentTime(newTime);
       commitDeckTime(newTime, true);
       syncRuntime();

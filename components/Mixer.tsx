@@ -282,7 +282,8 @@ function Crossfader({
 }
 
 // ─── Channel Strip ─────────────────────────────────────────────────────────────
-function ChannelStrip({ deckId, label, color }: { deckId: 'A' | 'B'; label: string; color: string }) {
+// layout 'row' lays the EQ, filter and fader side by side for the low tablet mixer strip.
+function ChannelStrip({ deckId, label, color, layout = 'column' }: { deckId: 'A' | 'B'; label: string; color: string; layout?: 'column' | 'row' }) {
   // Flat primitive selectors only — never return new object literals inside useShallow
   const track      = useDeckStore(s => deckId === 'A' ? s.deckA.track      : s.deckB.track);
   const isPlaying  = useDeckStore(s => deckId === 'A' ? s.deckA.isPlaying  : s.deckB.isPlaying);
@@ -352,24 +353,30 @@ function ChannelStrip({ deckId, label, color }: { deckId: 'A' | 'B'; label: stri
         <div className="text-[7px] text-white/15 mt-0.5 truncate text-center">{track?.title ?? '—'}</div>
       </div>
 
-      {/* 3-Band EQ with Kill */}
-      <div className="flex items-end gap-1.5">
-        <EQKnob label="HI"  value={eqHigh} onChange={v => setEQ(deckId, 'high', v)} color={color} />
-        <EQKnob label="MID" value={eqMid}  onChange={v => setEQ(deckId, 'mid',  v)} color={color} />
-        <EQKnob label="LO"  value={eqLow}  onChange={v => setEQ(deckId, 'low',  v)} color={color} />
+      <div className={clsx('flex items-center', layout === 'row' ? 'flex-row items-end gap-2' : 'flex-col gap-2')}>
+        {/* 3-Band EQ with Kill */}
+        <div className="flex items-end gap-1.5">
+          <EQKnob label="HI"  value={eqHigh} onChange={v => setEQ(deckId, 'high', v)} color={color} />
+          <EQKnob label="MID" value={eqMid}  onChange={v => setEQ(deckId, 'mid',  v)} color={color} />
+          <EQKnob label="LO"  value={eqLow}  onChange={v => setEQ(deckId, 'low',  v)} color={color} />
+        </div>
+
+        {/* Filter knob */}
+        <FilterKnob value={filterVal} onChange={setFilterVal} />
+
+        {/* Channel Fader — drives deckStore.volume → useDeckAudio picks it up */}
+        <ChannelFader value={vol} onChange={v => setVolume(deckId, v)} color={color} />
       </div>
-
-      {/* Filter knob */}
-      <FilterKnob value={filterVal} onChange={setFilterVal} />
-
-      {/* Channel Fader — drives deckStore.volume → useDeckAudio picks it up */}
-      <ChannelFader value={vol} onChange={v => setVolume(deckId, v)} color={color} />
     </div>
   );
 }
 
 // ─── Main Mixer ────────────────────────────────────────────────────────────────
-export function Mixer({ compact = false }: Readonly<{ compact?: boolean }>) {
+/**
+ * layout 'strip': a low, wide mixer for a portrait tablet, where the decks take the top of the
+ * screen. Channel A | crossfader | channel B in one row instead of stacked columns.
+ */
+export function Mixer({ compact = false, layout = 'full' }: Readonly<{ compact?: boolean; layout?: 'full' | 'strip' }>) {
   const crossfader       = useMixerStore(s => s.crossfader);
   const crossfaderCurve  = useMixerStore(s => s.crossfaderCurve);
   const vaultAmbience    = useMixerStore(s => s.vaultAmbience);
@@ -478,6 +485,22 @@ export function Mixer({ compact = false }: Readonly<{ compact?: boolean }>) {
             initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
             transition={{ duration: 0.12 }}
           >
+            {layout === 'strip' ? (
+              <div className="flex items-end justify-between gap-3 px-1">
+                <ChannelStrip deckId="A" label="DECK A" color="#D4AF37" layout="row" />
+                <div className="flex-1 min-w-[160px] max-w-xs self-center rounded-2xl border border-white/8 bg-black/40 backdrop-blur-sm p-3">
+                  <Crossfader
+                    value={crossfader}
+                    onChange={setCrossfader}
+                    curve={crossfaderCurve}
+                    onCurveChange={(c) => {
+                      setCrossfaderCurve(c);
+                    }}
+                  />
+                </div>
+                <ChannelStrip deckId="B" label="DECK B" color="#E11D48" layout="row" />
+              </div>
+            ) : (<>
             {/* Channel Strips + Master Meter */}
             <div className="flex items-start justify-between gap-1 px-1">
               <ChannelStrip deckId="A" label="DECK A" color="#D4AF37" />
@@ -503,6 +526,7 @@ export function Mixer({ compact = false }: Readonly<{ compact?: boolean }>) {
                 }}
               />
             </div>
+            </>)}
           </motion.div>
         )}
 

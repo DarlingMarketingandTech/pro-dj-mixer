@@ -163,6 +163,32 @@ gain                     gain
 
 **Try it.** With **QUANT ON**, press a loop size mid-beat. The loop starts on the beat; compare against the gold grid lines in the waveform.
 
+## 6b. The transport clock: knowing exactly where the playhead is
+
+**What.** A clock that answers "which second of the track is playing *right now*", or at any moment in the near future.
+
+**Why.** Beat jumps, loop points, cue points and phase sync all happen *on the beat*. If the software's idea of "now" is 30 ms late, every one of those lands 30 ms off, which is audible as a flam.
+
+**How.** Don't keep asking the audio where it is; *compute* it. Every time playback changes (play, pause, seek, new speed), write down an anchor:
+
+```
+"at context time 12.000 s the playhead was at 64.250 s, moving at rate 0.92"
+position(t) = 64.250 + 0.92 × (t − 12.000)
+```
+
+Speed changes in Web Audio don't jump: `setTargetAtTime` glides exponentially toward the new rate. The clock includes that glide exactly, using the integral of the curve. Tested against real rendered audio, the clock was within **0.24 ms**; ignoring the glide would be off by up to 2.5 ms.
+
+**Mixxx.** The engine *owns* the play position and advances it every audio callback. `RateControl::calculateSpeed` feeds the sync controller inside the same callback, as REA traced in the binary.
+
+**Here.**
+- The model: `lib/transportClock.ts`.
+- The engine API: `AudioEngine.getDeckPosition()`, `lib/audioEngine.ts`.
+- Readers: the deck display (`useDeckAudio`), beat jump, loops and cues (`Deck.tsx`, `usePerformanceFX.ts`).
+
+Building it surfaced a hidden bug: every **pause** reset the track to 0:00.
+
+**Try it.** Play a track, press **+4** beat jump a few times, and watch the gold grid lines: the music stays locked to the grid after every jump.
+
 ## 7. Key lock (time-stretching)
 
 **What.** Change tempo without changing musical pitch.

@@ -74,7 +74,7 @@ Built from `docs/research/FEATURE_COMPARISON.md`. Each item lists purpose (A), u
 - **F.** If you *rely* on split-mono cueing with a Y-cable today, this removes it until R9. The cue send is never enabled from the UI, so the right channel currently carries no cue signal anyway.
 - **G.** An `OfflineAudioContext` replica test: equal L/R RMS. A browser runtime check reading the master analyser's per-channel levels.
 
-### R6. Precise transport clock
+### R6. Precise transport clock — ✅ done 2026-10-11 (see implementation log)
 - **A.** Know each deck's position to the sample at any moment, without React re-renders.
 - **C.** The engine stores `{startContextTime, startPosition, rate}` per deck on every source start, rate change or seek. `getPosition(deck) = startPosition + (ctx.currentTime − startContextTime) × rate`, piecewise across rate changes. `useDeckAudio` reads it instead of accumulating RAF deltas.
 - **F.** Touches the core play path. Must stay compatible with `onSourceSwap` / `onPauseTime` callbacks and the SoundTouch path (which has its own position counter).
